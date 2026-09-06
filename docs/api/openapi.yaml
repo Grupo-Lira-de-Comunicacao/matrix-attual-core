@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Matrix Attual Core API
-  version: 0.1.0
-  description: API v1 para eventos, identidade e recomendacoes da Matrix Attual.
+  version: 0.2.0
+  description: API v1 da Matrix Attual. M1 implementa ingestao de eventos do AttualPlay.
 servers:
   - url: https://api.example.invalid
     description: Placeholder ate o endpoint oficial ser provisionado
@@ -12,61 +12,77 @@ paths:
       operationId: health
       responses:
         '200':
-          description: Healthy
+          description: Process healthy
           content:
             application/json:
               schema:
                 type: object
-                required: [status, version]
+                required: [status, service, version]
                 properties:
                   status: { type: string, const: ok }
+                  service: { type: string }
                   version: { type: string }
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        '200': { description: Matrix database ready }
+        '503': { description: Matrix database not ready }
+  /v1/event-types:
+    get:
+      operationId: listEventTypes
+      responses:
+        '200':
+          description: Event Catalog v1 types accepted by the API
   /v1/events:
     post:
       operationId: ingestEvent
       security:
-        - publicClient: []
+        - matrixClient: []
+          matrixPublishableKey: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/EventEnvelope'
+            schema: { $ref: '#/components/schemas/EventEnvelope' }
       responses:
         '200':
           description: Accepted or idempotent duplicate
           content:
             application/json:
-              schema:
-                type: object
-                required: [accepted, event_id, correlation_id]
-                properties:
-                  accepted: { type: boolean }
-                  duplicate: { type: boolean, default: false }
-                  event_id: { type: string, format: uuid }
-                  correlation_id: { type: string, format: uuid }
+              schema: { $ref: '#/components/schemas/IngestResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
   /v1/events/batch:
     post:
       operationId: ingestEventBatch
       security:
-        - publicClient: []
+        - matrixClient: []
+          matrixPublishableKey: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [events]
               properties:
                 events:
                   type: array
+                  minItems: 1
                   maxItems: 100
                   items: { $ref: '#/components/schemas/EventEnvelope' }
       responses:
-        '200': { description: Batch processed }
+        '200':
+          description: Batch processed
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
   /v1/recommendations:
     get:
       operationId: getRecommendations
@@ -81,15 +97,14 @@ paths:
           name: limit
           schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
       responses:
-        '200':
-          description: Recommendation set
+        '200': { description: Planned for later M1/M2 increment }
   /v1/identity/resolve:
     post:
       operationId: resolveIdentity
       security:
         - backendClient: []
       responses:
-        '200': { description: Identity resolution result }
+        '200': { description: Planned backend identity resolution }
   /v1/people/{person_id}/summary:
     get:
       operationId: personSummary
@@ -101,13 +116,19 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200': { description: Person summary }
+        '200': { description: Planned person summary }
 components:
   securitySchemes:
-    publicClient:
+    matrixClient:
       type: apiKey
       in: header
       name: X-Matrix-Client
+      description: Identificador publicavel do produtor, inicialmente `attualplay`.
+    matrixPublishableKey:
+      type: apiKey
+      in: header
+      name: X-Matrix-Key
+      description: Chave publicavel de baixa autoridade; nunca e uma chave administrativa do banco.
     personSession:
       type: http
       scheme: bearer
@@ -117,26 +138,52 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    ConsentSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        essential: { type: boolean, default: true }
+        analytics: { type: boolean }
+        personalization: { type: boolean }
+        marketing: { type: boolean }
+        policy_version: { type: string, maxLength: 80 }
     EventEnvelope:
       type: object
       additionalProperties: false
       required: [event_id, event_type, occurred_at, project_key, idempotency_key]
+      anyOf:
+        - required: [anonymous_id]
+        - required: [person_token]
       properties:
         event_id: { type: string, format: uuid }
         event_type: { type: string, minLength: 3, maxLength: 128 }
         occurred_at: { type: string, format: date-time }
         project_key: { type: string, minLength: 2, maxLength: 100 }
-        anonymous_id: { type: [string, 'null'] }
-        person_token: { type: [string, 'null'] }
-        session_id: { type: [string, 'null'] }
+        anonymous_id: { type: [string, 'null'], minLength: 3, maxLength: 200 }
+        person_token: { type: [string, 'null'], minLength: 8, maxLength: 512 }
+        session_id: { type: [string, 'null'], maxLength: 200 }
         object:
           type: [object, 'null']
+          additionalProperties: false
+          required: [type, id]
           properties:
-            type: { type: string }
-            id: { type: string }
+            type: { type: string, maxLength: 80 }
+            id: { type: string, maxLength: 200 }
         properties: { type: object, default: {} }
-        context: { type: object, default: {} }
+        context:
+          type: object
+          default: {}
+          description: Somente chaves minimizadas allowlisted pelo Event API.
+        consent: { $ref: '#/components/schemas/ConsentSnapshot' }
         idempotency_key: { type: string, minLength: 8, maxLength: 200 }
+    IngestResult:
+      type: object
+      required: [accepted, duplicate, event_id, correlation_id]
+      properties:
+        accepted: { type: boolean, const: true }
+        duplicate: { type: boolean }
+        event_id: { type: string, format: uuid }
+        correlation_id: { type: string, format: uuid }
     Error:
       type: object
       required: [error]

@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  contracts:
+  contracts-and-app:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +29,11 @@ jobs:
           test -f docs/events/EVENT_CATALOG_v1.md
           test -f docs/contracts/ATTUALPLAY_DATA_CONTRACT_v1.md
           test -f docs/api/openapi.yaml
+          test -f docs/implementation/EVENT_API_M1.md
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and unit tests
+        run: npm run check
