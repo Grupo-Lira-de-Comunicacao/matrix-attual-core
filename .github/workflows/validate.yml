@@ -1,0 +1,31 @@
+name: validate
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject obvious secrets
+        run: |
+          set -e
+          if grep -RInE '(SUPABASE_SERVICE_ROLE_KEY\s*=|SUPABASE_ACCESS_TOKEN\s*=|sb_secret_|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' --exclude-dir=.git .; then
+            echo 'Potential secret committed.'
+            exit 1
+          fi
+      - name: Verify migration sequence
+        run: |
+          set -e
+          test -f supabase/migrations/001_matrix_extensions.sql
+          test -f supabase/migrations/014_matrix_seed_core.sql
+          count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
+          test "$count" -eq 14
+      - name: Verify required contracts
+        run: |
+          test -f docs/events/EVENT_CATALOG_v1.md
+          test -f docs/contracts/ATTUALPLAY_DATA_CONTRACT_v1.md
+          test -f docs/api/openapi.yaml
