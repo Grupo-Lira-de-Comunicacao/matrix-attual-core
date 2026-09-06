@@ -13,7 +13,7 @@ jobs:
       - name: Reject obvious secrets
         run: |
           set -e
-          if grep -RInE '(SUPABASE_SERVICE_ROLE_KEY\s*=|SUPABASE_ACCESS_TOKEN\s*=|sb_secret_|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' --exclude-dir=.git .; then
+          if git grep -nE '(SUPABASE_SERVICE_ROLE_KEY\s*=|SUPABASE_ACCESS_TOKEN\s*=|sb_secret_|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!.github/workflows/validate.yml'; then
             echo 'Potential secret committed.'
             exit 1
           fi
