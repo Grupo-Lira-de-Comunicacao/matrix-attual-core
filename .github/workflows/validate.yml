@@ -30,6 +30,7 @@ jobs:
           test -f docs/contracts/ATTUALPLAY_DATA_CONTRACT_v1.md
           test -f docs/api/openapi.yaml
           test -f docs/implementation/EVENT_API_M1.md
+          test -f docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -37,3 +38,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Typecheck and unit tests
         run: npm run check
+      - name: Build VPS runtime
+        run: npm run build:server
+      - name: Build Docker image
+        run: docker build -t matrix-attual-api:ci .

@@ -1,0 +1,21 @@
+services:
+  matrix-attual-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: matrix-attual-api:${MATRIX_IMAGE_TAG:-local}
+    container_name: matrix-attual-api
+    restart: unless-stopped
+    env_file:
+      - /etc/matrix-attual/matrix.env
+    environment:
+      PORT: "8787"
+    ports:
+      - "127.0.0.1:8787:8787"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
