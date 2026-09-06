@@ -1,0 +1,12 @@
+.git
+.github
+docs
+supabase
+api
+node_modules
+src/__tests__
+.env
+.env.*
+*.log
+coverage
+dist
