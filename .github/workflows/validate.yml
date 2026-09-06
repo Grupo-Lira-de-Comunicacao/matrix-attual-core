@@ -22,8 +22,9 @@ jobs:
           set -e
           test -f supabase/migrations/001_matrix_extensions.sql
           test -f supabase/migrations/014_matrix_seed_core.sql
+          test -f supabase/migrations/015_matrix_service_role_grants.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 14
+          test "$count" -eq 15
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
