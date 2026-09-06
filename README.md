@@ -1,39 +1,45 @@
 # Matrix Attual Core
 
-Nucleo tecnico da **Matrix Attual**, arquitetura de identidade, eventos, relacionamento, contexto, recomendacao e inteligencia do ecossistema Grupo Lira / TV Attual.
+Nucleo tecnico privado da Matrix Attual: identidade, eventos, relacionamento, consentimento, interesses, recomendacoes e auditoria do ecossistema Grupo Lira.
 
 ## Status
 
-**M0 - Foundation em bootstrap.**
+**Fase:** M0 Foundation  
+**Branch de trabalho:** `codex/matrix-foundation-m0`
 
-Nesta fase, o repositorio concentra os contratos e a fundacao tecnica. Nenhuma migration deve ser aplicada em producao antes da validacao do Account Registry / Credential Broker para o Supabase dedicado da Matrix Attual.
+## Entregas M0
 
-## Componentes previstos
+- arquitetura modular/event-driven;
+- Supabase migrations `001` a `014` preparadas;
+- isolamento por tenant/project;
+- identidade e perfis anonimos;
+- Consent Registry;
+- catalogo de conteudo/topics;
+- Event Store idempotente;
+- Attual Graph;
+- Interest Engine data model;
+- Recommendation Engine data model;
+- segments/campaigns;
+- audit/DLQ;
+- RLS deny-by-default;
+- Event Catalog v1;
+- OpenAPI v1;
+- Data Contract AttualPlay v1;
+- CI basico de contratos e secret scanning.
 
-- Identity
-- Consent
-- Event Ingestion / Event Store
-- Catalog / Topics
-- Attual Graph / Relationships
-- Interest Engine
-- Recommendation Engine + Explainability
-- Segments
-- Audit / Observability
-- SDK Web
+## Supabase alvo
 
-## Infraestrutura alvo
+- project: `matrixattual`
+- project_ref: `fdmvvxsdfanqarokastv`
+- credential: resolvida pelo ATLAS via Account Registry -> Credential Broker -> Infisical
 
-- GitHub: fonte de verdade do codigo
-- Supabase/PostgreSQL: data layer dedicado
-- Infisical: segredos
-- ATLAS: governanca e operacao
-- n8n: automacoes e integracoes
-- Vercel: interfaces e APIs quando aplicavel
+Nenhum segredo deve ser commitado neste repositorio.
 
-## Primeiro piloto
+## Proximo gate
 
-**AttualPlay + Attual One**.
-
-## Regra central
-
-A Matrix Attual conecta produtos existentes por contratos, identidade e eventos. Ela nao substitui os sistemas de dominio que ja funcionam.
+1. ATLAS runtime assimilar o Account Registry atualizado;
+2. validar `supabase.project.get` via credencial `matrixattual`;
+3. revisar backup/preconditions;
+4. aplicar migrations via `supabase.migration.apply` (N4 / `APROVO`);
+5. rodar Supabase security/performance advisors;
+6. iniciar Event API + SDK AttualPlay.
