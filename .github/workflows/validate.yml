@@ -20,7 +20,8 @@ jobs:
       - name: Verify migration sequence
         run: |
           set -e
-          for n in $(seq -w 1 24); do
+          for i in $(seq 1 24); do
+            n=$(printf '%03d' "$i")
             test $(find supabase/migrations -maxdepth 1 -type f -name "${n}_*.sql" | wc -l) -eq 1
           done
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
