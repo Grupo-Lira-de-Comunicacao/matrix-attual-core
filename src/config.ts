@@ -43,7 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
         projectKey: "attualplay",
         publishableKey,
         allowedOrigins,
-        scopes: ["events:write"],
+        scopes: ["events:write", "recommendations:read"],
       },
     },
     maxBodyBytes: Number(env.MATRIX_MAX_BODY_BYTES ?? 262144),

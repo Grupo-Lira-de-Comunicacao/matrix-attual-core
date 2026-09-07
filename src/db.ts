@@ -30,11 +30,30 @@ export type EventRow = {
 
 export type InsertResult = { eventId: string; duplicate: boolean };
 
+export type PersonalizedTopic = {
+  rank: number;
+  topic_key: string;
+  topic_label: string;
+  score: number;
+  confidence: number;
+  signal_count: number;
+};
+
+export type PersonalizedRecommendation = {
+  recommendation_id: string;
+  reason_text: string;
+  generated_at: string;
+  expires_at: string | null;
+  policy_version: string;
+  items: PersonalizedTopic[];
+};
+
 export interface MatrixRepository {
   resolveProject(projectKey: string): Promise<ProjectRef>;
   upsertAnonymous(project: ProjectRef, anonymousId: string): Promise<string>;
   resolvePersonToken(project: ProjectRef, personToken: string): Promise<string | null>;
   insertEvent(row: EventRow): Promise<InsertResult>;
+  getEligibleRecommendation(project: ProjectRef, anonymousId: string): Promise<PersonalizedRecommendation | null>;
   ready(): Promise<boolean>;
 }
 
@@ -125,5 +144,65 @@ export class SupabaseMatrixRepository implements MatrixRepository {
       throw new Error("event id conflict");
     }
     throw new Error(`event insert failed${inserted.error?.code ? ` (${inserted.error.code})` : ""}`);
+  }
+
+  async getEligibleRecommendation(project: ProjectRef, anonymousId: string): Promise<PersonalizedRecommendation | null> {
+    const profile = await this.db
+      .from("matrix_anonymous_profiles")
+      .select("id")
+      .eq("tenant_id", project.tenantId)
+      .eq("project_id", project.projectId)
+      .eq("anonymous_key_hash", sha256(anonymousId))
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+    if (profile.error) throw new Error("anonymous recommendation profile lookup failed");
+    if (!profile.data?.id) return null;
+
+    const decision = await this.db
+      .from("matrix_m3_decisions")
+      .select("recommendation_id,policy_version,expires_at")
+      .eq("project_id", project.projectId)
+      .eq("anonymous_profile_id", profile.data.id)
+      .eq("decision_status", "eligible")
+      .gt("expires_at", new Date().toISOString())
+      .order("evaluated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (decision.error) throw new Error("M3 recommendation decision lookup failed");
+    if (!decision.data?.recommendation_id) return null;
+
+    const recommendation = await this.db
+      .from("matrix_recommendations")
+      .select("id,reason_text,generated_at,expires_at,source_signals")
+      .eq("id", decision.data.recommendation_id)
+      .eq("project_id", project.projectId)
+      .eq("recommendation_type", "topic_affinity_shadow")
+      .eq("status", "shadow")
+      .maybeSingle();
+    if (recommendation.error) throw new Error("M3 recommendation lookup failed");
+    if (!recommendation.data) return null;
+
+    const signals = Array.isArray(recommendation.data.source_signals) ? recommendation.data.source_signals : [];
+    const items: PersonalizedTopic[] = signals.slice(0, 3).flatMap((raw: unknown, index: number) => {
+      if (!raw || typeof raw !== "object") return [];
+      const item = raw as Record<string, unknown>;
+      const topicKey = String(item.topic_key ?? "").slice(0, 80);
+      const topicLabel = String(item.topic_label ?? topicKey).slice(0, 120);
+      const score = Number(item.score ?? 0);
+      const confidence = Number(item.confidence ?? 0);
+      const signalCount = Number(item.signal_count ?? 0);
+      if (!topicKey || !Number.isFinite(score) || !Number.isFinite(confidence) || !Number.isFinite(signalCount)) return [];
+      return [{ rank: index + 1, topic_key: topicKey, topic_label: topicLabel, score, confidence, signal_count: signalCount }];
+    });
+    if (!items.length) return null;
+
+    return {
+      recommendation_id: recommendation.data.id,
+      reason_text: String(recommendation.data.reason_text ?? "Recomendação baseada no uso consentido do AttualPlay.").slice(0, 300),
+      generated_at: recommendation.data.generated_at,
+      expires_at: recommendation.data.expires_at,
+      policy_version: decision.data.policy_version,
+      items,
+    };
   }
 }
