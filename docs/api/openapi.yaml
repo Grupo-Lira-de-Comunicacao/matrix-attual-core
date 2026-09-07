@@ -1,11 +1,14 @@
 openapi: 3.1.0
 info:
   title: Matrix Attual Core API
-  version: 0.2.0
-  description: API v1 da Matrix Attual. M1 implementa ingestao de eventos do AttualPlay.
+  version: 0.4.0
+  description: >-
+    Matrix Attual API for consent-gated AttualPlay analytics, in-app topic
+    personalization and the M4 explicit ATTUAL ONE identity bridge. M4 does
+    not enable marketing or autonomous external messaging.
 servers:
-  - url: https://api.example.invalid
-    description: Placeholder ate o endpoint oficial ser provisionado
+  - url: https://matrix-attual-core.vercel.app
+    description: Matrix production API
 paths:
   /health:
     get:
@@ -17,11 +20,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, service, version]
+                required: [status, service, version, milestone]
                 properties:
                   status: { type: string, const: ok }
-                  service: { type: string }
-                  version: { type: string }
+                  service: { type: string, const: matrix-event-api }
+                  version: { type: string, const: 0.4.0 }
+                  milestone: { type: string, const: M4 }
   /ready:
     get:
       operationId: ready
@@ -32,8 +36,7 @@ paths:
     get:
       operationId: listEventTypes
       responses:
-        '200':
-          description: Event Catalog v1 types accepted by the API
+        '200': { description: Event Catalog v1 types accepted by the API }
   /v1/events:
     post:
       operationId: ingestEvent
@@ -55,7 +58,6 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '413': { $ref: '#/components/responses/Error' }
-        '429': { $ref: '#/components/responses/Error' }
   /v1/events/batch:
     post:
       operationId: ingestEventBatch
@@ -77,66 +79,150 @@ paths:
                   maxItems: 100
                   items: { $ref: '#/components/schemas/EventEnvelope' }
       responses:
-        '200':
-          description: Batch processed
+        '200': { description: Batch processed }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '413': { $ref: '#/components/responses/Error' }
-  /v1/recommendations:
-    get:
-      operationId: getRecommendations
-      security:
-        - personSession: []
-      parameters:
-        - in: query
-          name: project_key
-          required: true
-          schema: { type: string }
-        - in: query
-          name: limit
-          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
-      responses:
-        '200': { description: Planned for later M1/M2 increment }
-  /v1/identity/resolve:
+  /v1/recommendations/query:
     post:
-      operationId: resolveIdentity
+      operationId: queryRecommendation
+      description: >-
+        Returns an eligible in-app topic recommendation only after explicit
+        analytics, personalization and adult confirmation. Identified queries
+        are additionally gated by the current server-side consent ledger.
       security:
-        - backendClient: []
+        - matrixClient: []
+          matrixPublishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecommendationQuery' }
       responses:
-        '200': { description: Planned backend identity resolution }
-  /v1/people/{person_id}/summary:
+        '200':
+          description: Eligible recommendation or null
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecommendationResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/internal/identity/bridge:
+    post:
+      operationId: issueIdentityBridge
+      description: >-
+        Server-only endpoint used by ATTUAL ONE to issue a temporary one-time
+        bridge code. The external account reference is an opaque UUID; name,
+        email, phone and CPF are not accepted by this contract.
+      security:
+        - attualOneServer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityBridgeIssue' }
+      responses:
+        '201': { description: One-time bridge code issued }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/identity/link:
+    post:
+      operationId: consumeIdentityBridge
+      description: >-
+        Explicitly links the current AttualPlay anonymous profile to the Matrix
+        person represented by a valid one-time bridge code and creates a
+        revocable opaque person-session token.
+      security:
+        - matrixClient: []
+          matrixPublishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityLinkRequest' }
+      responses:
+        '200': { description: Identity linked and person session issued }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /v1/consents:
+    post:
+      operationId: syncPersonConsent
+      description: Persists current identified analytics/personalization consent in the Matrix server ledger.
+      security:
+        - matrixClient: []
+          matrixPublishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonConsentRequest' }
+      responses:
+        '200': { description: Server-side consent synchronized }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/identity/unlink:
+    post:
+      operationId: unlinkIdentity
+      description: Revokes the active Matrix person session and explicit identity link for the project.
+      security:
+        - matrixClient: []
+          matrixPublishableKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityUnlinkRequest' }
+      responses:
+        '200': { description: Identity session/link revoked }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/internal/m4/dispatch:
+    post:
+      operationId: dispatchM4Signals
+      description: Server-only governed dispatcher for eligible ATTUAL ONE qualified-interest signals.
+      security:
+        - m4InternalServer: []
+      responses:
+        '200': { description: Dispatch cycle completed; marketing and n8n external actions remain disabled }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/m4/status:
     get:
-      operationId: personSummary
+      operationId: m4Status
+      description: Server-only M4 observability snapshot.
       security:
-        - backendClient: []
-      parameters:
-        - in: path
-          name: person_id
-          required: true
-          schema: { type: string, format: uuid }
+        - m4InternalServer: []
       responses:
-        '200': { description: Planned person summary }
+        '200': { description: M4 observability snapshot }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     matrixClient:
       type: apiKey
       in: header
       name: X-Matrix-Client
-      description: Identificador publicavel do produtor, inicialmente `attualplay`.
+      description: Publishable producer identifier, currently attualplay.
     matrixPublishableKey:
       type: apiKey
       in: header
       name: X-Matrix-Key
-      description: Chave publicavel de baixa autoridade; nunca e uma chave administrativa do banco.
-    personSession:
+      description: Low-authority publishable Matrix key; never a database administrative key.
+    attualOneServer:
       type: http
       scheme: bearer
-      bearerFormat: JWT
-    backendClient:
+      description: Server-only Matrix/ATTUAL ONE integration credential.
+    m4InternalServer:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      description: Server-only credential for M4 dispatcher and observability routes.
   schemas:
     ConsentSnapshot:
       type: object
@@ -146,7 +232,18 @@ components:
         analytics: { type: boolean }
         personalization: { type: boolean }
         marketing: { type: boolean }
+        adult_confirmed: { type: boolean }
         policy_version: { type: string, maxLength: 80 }
+    M4Consent:
+      type: object
+      additionalProperties: false
+      required: [analytics, personalization, adult_confirmed, marketing, policy_version]
+      properties:
+        analytics: { type: boolean }
+        personalization: { type: boolean }
+        adult_confirmed: { type: boolean }
+        marketing: { type: boolean, const: false }
+        policy_version: { type: string, minLength: 3, maxLength: 80 }
     EventEnvelope:
       type: object
       additionalProperties: false
@@ -170,10 +267,7 @@ components:
             type: { type: string, maxLength: 80 }
             id: { type: string, maxLength: 200 }
         properties: { type: object, default: {} }
-        context:
-          type: object
-          default: {}
-          description: Somente chaves minimizadas allowlisted pelo Event API.
+        context: { type: object, default: {} }
         consent: { $ref: '#/components/schemas/ConsentSnapshot' }
         idempotency_key: { type: string, minLength: 8, maxLength: 200 }
     IngestResult:
@@ -184,6 +278,71 @@ components:
         duplicate: { type: boolean }
         event_id: { type: string, format: uuid }
         correlation_id: { type: string, format: uuid }
+    RecommendationQuery:
+      type: object
+      additionalProperties: false
+      required: [project_key, consent]
+      anyOf:
+        - required: [anonymous_id]
+        - required: [person_token]
+      properties:
+        project_key: { type: string, minLength: 2, maxLength: 100 }
+        anonymous_id: { type: string, minLength: 3, maxLength: 200 }
+        person_token: { type: string, minLength: 16, maxLength: 512 }
+        consent:
+          type: object
+          additionalProperties: false
+          required: [analytics, personalization, adult_confirmed, policy_version]
+          properties:
+            analytics: { type: boolean, const: true }
+            personalization: { type: boolean, const: true }
+            adult_confirmed: { type: boolean, const: true }
+            marketing: { type: boolean }
+            policy_version: { type: string, minLength: 3, maxLength: 80 }
+    RecommendationResponse:
+      type: object
+      required: [recommendation, policy, correlation_id]
+      properties:
+        recommendation: { type: [object, 'null'] }
+        policy:
+          type: object
+          properties:
+            personalization_opt_in: { type: boolean, const: true }
+            server_side_consent: { type: boolean }
+            marketing_enabled: { type: boolean, const: false }
+        correlation_id: { type: string, format: uuid }
+    IdentityBridgeIssue:
+      type: object
+      additionalProperties: false
+      required: [project_key, external_system, external_account_ref]
+      properties:
+        project_key: { type: string, minLength: 2, maxLength: 100 }
+        external_system: { type: string, const: attual_one }
+        external_account_ref: { type: string, format: uuid }
+    IdentityLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [project_key, anonymous_id, bridge_code, consent]
+      properties:
+        project_key: { type: string }
+        anonymous_id: { type: string, minLength: 3, maxLength: 200 }
+        bridge_code: { type: string, minLength: 12, maxLength: 120 }
+        consent: { $ref: '#/components/schemas/M4Consent' }
+    PersonConsentRequest:
+      type: object
+      additionalProperties: false
+      required: [project_key, person_token, consent]
+      properties:
+        project_key: { type: string }
+        person_token: { type: string, minLength: 16, maxLength: 512 }
+        consent: { $ref: '#/components/schemas/M4Consent' }
+    IdentityUnlinkRequest:
+      type: object
+      additionalProperties: false
+      required: [project_key, person_token]
+      properties:
+        project_key: { type: string }
+        person_token: { type: string, minLength: 16, maxLength: 512 }
     Error:
       type: object
       required: [error]

@@ -34,6 +34,20 @@ export async function ingestOne(
     ? await repository.resolvePersonToken(project, event.person_token)
     : null;
 
+  if (event.person_token && !personId) {
+    const error = new Error("person session is invalid or expired");
+    Object.assign(error, { status: 401 });
+    throw error;
+  }
+  if (personId && event.consent?.analytics === true) {
+    const analyticsGranted = await repository.hasCurrentPersonConsent(personId, "analytics");
+    if (!analyticsGranted) {
+      const error = new Error("server-side analytics consent is not granted");
+      Object.assign(error, { status: 403 });
+      throw error;
+    }
+  }
+
   const cid = correlationId(requestedCorrelationId);
   const row: EventRow = {
     id: event.event_id,

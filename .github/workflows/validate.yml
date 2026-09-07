@@ -28,8 +28,10 @@ jobs:
           test -f supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
           test -f supabase/migrations/019_matrix_m2_shadow_smoke.sql
           test -f supabase/migrations/020_matrix_m3_controlled_activation.sql
+          test -f supabase/migrations/021_matrix_m4_identity_bridge.sql
+          test -f supabase/migrations/022_matrix_m4_api_grants_and_guards.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 20
+          test "$count" -eq 22
       - name: Verify retention safety contract
         run: |
           set -e
@@ -108,6 +110,34 @@ jobs:
           grep -q '/v1/recommendations/query' src/app.ts
           grep -q 'personalization: z.literal(true)' src/app.ts
           grep -q 'marketing_not_enabled' src/app.ts
+      - name: Verify M4 identity and downstream safety contract
+        run: |
+          set -e
+          file=supabase/migrations/021_matrix_m4_identity_bridge.sql
+          guards=supabase/migrations/022_matrix_m4_api_grants_and_guards.sql
+          grep -q 'matrix_identity_bridge_tokens' "$file"
+          grep -q 'matrix_person_sessions' "$file"
+          grep -q 'matrix_m4_context_promotions' "$file"
+          grep -q 'matrix_current_person_consent' "$file"
+          grep -q 'matrix_run_m4_control' "$file"
+          grep -q 'matrix-m4-control-v1' "$file"
+          grep -q "'marketing_enabled', false" "$file"
+          grep -q "'n8n_external_actions_enabled', false" "$file"
+          grep -q "'hidden_identity_stitching', false" "$file"
+          grep -q "'external_action_allowed', false" "$file"
+          grep -q "revoke all on function public.matrix_run_m4_control" "$file"
+          grep -q 'M4_CONTROL_EXECUTE_EXPOSED' "$guards"
+          grep -q 'M4_N8N_EXTERNAL_ACTION_ROW_PRESENT' "$guards"
+          if grep -Ei 'grant[[:space:]]+execute.*matrix_run_m4_control.*(public|anon|authenticated|service_role)' "$file" "$guards"; then
+            echo 'M4 control function must not be executable by client or service roles.'
+            exit 1
+          fi
+          grep -q 'identity:link' src/config.ts
+          grep -q 'consent:write' src/config.ts
+          grep -q '/v1/identity/link' src/app.ts
+          grep -q '/v1/identity/unlink' src/app.ts
+          grep -q '/v1/internal/identity/bridge' src/app.ts
+          grep -q '/v1/internal/m4/dispatch' src/app.ts
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
@@ -118,6 +148,7 @@ jobs:
           test -f docs/implementation/RETENTION_POLICY_v1.md
           test -f docs/implementation/M2_SHADOW_INTELLIGENCE_v1.md
           test -f docs/implementation/M3_CONTROLLED_ACTIVATION_v1.md
+          test -f docs/implementation/M4_IDENTITY_BRIDGE_v1.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
