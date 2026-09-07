@@ -38,6 +38,8 @@ export interface MatrixRepository {
   ready(): Promise<boolean>;
 }
 
+const ANONYMOUS_RETENTION_DAYS = 90;
+
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -74,7 +76,8 @@ export class SupabaseMatrixRepository implements MatrixRepository {
   }
 
   async upsertAnonymous(project: ProjectRef, anonymousId: string): Promise<string> {
-    const now = new Date().toISOString();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ANONYMOUS_RETENTION_DAYS * 24 * 60 * 60 * 1000);
     const result = await this.db
       .from("matrix_anonymous_profiles")
       .upsert(
@@ -82,7 +85,8 @@ export class SupabaseMatrixRepository implements MatrixRepository {
           tenant_id: project.tenantId,
           project_id: project.projectId,
           anonymous_key_hash: sha256(anonymousId),
-          last_seen_at: now,
+          last_seen_at: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
         },
         { onConflict: "tenant_id,project_id,anonymous_key_hash" },
       )
