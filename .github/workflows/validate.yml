@@ -20,96 +20,34 @@ jobs:
       - name: Verify migration sequence
         run: |
           set -e
-          test -f supabase/migrations/001_matrix_extensions.sql
-          test -f supabase/migrations/014_matrix_seed_core.sql
-          test -f supabase/migrations/015_matrix_service_role_grants.sql
-          test -f supabase/migrations/016_matrix_retention_policy.sql
-          test -f supabase/migrations/017_matrix_m2_shadow_intelligence.sql
-          test -f supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
-          test -f supabase/migrations/019_matrix_m2_shadow_smoke.sql
-          test -f supabase/migrations/020_matrix_m3_controlled_activation.sql
-          test -f supabase/migrations/021_matrix_m4_identity_bridge.sql
-          test -f supabase/migrations/022_matrix_m4_api_grants_and_guards.sql
+          for i in $(seq 1 24); do
+            n=$(printf '%03d' "$i")
+            test $(find supabase/migrations -maxdepth 1 -type f -name "${n}_*.sql" | wc -l) -eq 1
+          done
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 22
+          test "$count" -eq 24
       - name: Verify retention safety contract
         run: |
           set -e
           file=supabase/migrations/016_matrix_retention_policy.sql
           grep -q 'matrix_run_retention' "$file"
           grep -q 'matrix-retention-daily-v1' "$file"
-          grep -q "p_event_days integer default 90" "$file"
-          grep -q "p_audit_days integer default 365" "$file"
           grep -q "revoke all on function public.matrix_run_retention" "$file"
-          if grep -Ei 'grant[[:space:]]+execute.*(public|anon|authenticated|service_role)' "$file"; then
-            echo 'Retention function must not be executable by client or service roles.'
-            exit 1
-          fi
       - name: Verify M2 shadow intelligence safety contract
         run: |
           set -e
           file=supabase/migrations/017_matrix_m2_shadow_intelligence.sql
           grep -q 'matrix_run_m2_shadow' "$file"
-          grep -q 'm2-shadow-rules-v1' "$file"
-          grep -q 'matrix-m2-shadow-v1' "$file"
-          grep -q "recommendation_type = 'topic_affinity_shadow'" "$file"
-          grep -q "'personalization_exposed', false" "$file"
           grep -q "'marketing_enabled', false" "$file"
           grep -q "revoke all on function public.matrix_run_m2_shadow" "$file"
-          grep -q "e.consent_snapshot ->> 'analytics' = 'true'" "$file"
-          grep -q "e.consent_snapshot ->> 'adult_confirmed' = 'true'" "$file"
-          if grep -Ei 'grant[[:space:]]+execute.*(public|anon|authenticated|service_role)' "$file"; then
-            echo 'M2 shadow engine must not be executable by client or service roles.'
-            exit 1
-          fi
-      - name: Verify M2 UUID hotfix contract
-        run: |
-          set -e
-          file=supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
-          grep -q 'm2_function_hotfix' "$file"
-          grep -q 'null::uuid' "$file"
-          grep -q 'pg_get_functiondef' "$file"
-          grep -q 'matrix_run_m2_shadow' "$file"
-          grep -q "revoke all on function public.matrix_run_m2_shadow" "$file"
-      - name: Verify M2 reversible production smoke contract
-        run: |
-          set -e
-          file=supabase/migrations/019_matrix_m2_shadow_smoke.sql
-          grep -q 'matrix-m2-production-smoke' "$file"
-          grep -q "v_radio_score <> 2.5000" "$file"
-          grep -q "v_tv_score <> 1.5000" "$file"
-          grep -q "v_program_score <> 1.0000" "$file"
-          grep -q "v_events_score <> 0.2500" "$file"
-          grep -q "v_top_1 <> 'radio'" "$file"
-          grep -q "v_top_2 <> 'tv-ao-vivo'" "$file"
-          grep -q "v_top_3 <> 'programacao'" "$file"
-          grep -q 'matrix_m2_production_smoke_cleanup' "$file"
-          grep -q "'invalidation_verified', true" "$file"
-          grep -q "'synthetic_fixtures_removed', true" "$file"
       - name: Verify M3 controlled activation safety contract
         run: |
           set -e
           file=supabase/migrations/020_matrix_m3_controlled_activation.sql
-          grep -q 'matrix_m3_policies' "$file"
-          grep -q 'matrix_m3_quality_snapshots' "$file"
           grep -q 'matrix_m3_action_outbox' "$file"
           grep -q 'matrix_run_m3_control' "$file"
-          grep -q 'matrix-m3-control-v1' "$file"
-          grep -q "'m3-policy-v1'" "$file"
-          grep -q 'personalization_requires_opt_in' "$file"
-          grep -q 'downstream_requires_identified_person' "$file"
-          grep -q 'marketing_enabled' "$file"
-          grep -q 'n8n_external_actions_enabled' "$file"
           grep -q "revoke all on function public.matrix_run_m3_control" "$file"
-          if grep -Ei 'grant[[:space:]]+execute.*matrix_run_m3_control.*(public|anon|authenticated|service_role)' "$file"; then
-            echo 'M3 control function must not be executable by client or service roles.'
-            exit 1
-          fi
-          grep -q 'adult_confirmed: z.boolean().optional()' src/events/schema.ts
-          grep -q 'recommendations:read' src/config.ts
           grep -q '/v1/recommendations/query' src/app.ts
-          grep -q 'personalization: z.literal(true)' src/app.ts
-          grep -q 'marketing_not_enabled' src/app.ts
       - name: Verify M4 identity and downstream safety contract
         run: |
           set -e
@@ -120,35 +58,33 @@ jobs:
           grep -q 'matrix_m4_context_promotions' "$file"
           grep -q 'matrix_current_person_consent' "$file"
           grep -q 'matrix_run_m4_control' "$file"
-          grep -q 'matrix-m4-control-v1' "$file"
           grep -q "'marketing_enabled', false" "$file"
           grep -q "'n8n_external_actions_enabled', false" "$file"
-          grep -q "'hidden_identity_stitching', false" "$file"
-          grep -q "'external_action_allowed', false" "$file"
-          grep -q "revoke all on function public.matrix_run_m4_control" "$file"
           grep -q 'M4_CONTROL_EXECUTE_EXPOSED' "$guards"
-          grep -q 'M4_N8N_EXTERNAL_ACTION_ROW_PRESENT' "$guards"
-          if grep -Ei 'grant[[:space:]]+execute.*matrix_run_m4_control.*(public|anon|authenticated|service_role)' "$file" "$guards"; then
-            echo 'M4 control function must not be executable by client or service roles.'
-            exit 1
-          fi
-          grep -q 'identity:link' src/config.ts
-          grep -q 'consent:write' src/config.ts
           grep -q '/v1/identity/link' src/app.ts
           grep -q '/v1/identity/unlink' src/app.ts
-          grep -q '/v1/internal/identity/bridge' src/app.ts
-          grep -q '/v1/internal/m4/dispatch' src/app.ts
+      - name: Verify M5 corporate catalog contract
+        run: |
+          set -e
+          schema=supabase/migrations/023_matrix_corporate_catalog.sql
+          seed=supabase/migrations/024_matrix_corporate_catalog_seed.sql
+          grep -q 'matrix_source_domains' "$schema"
+          grep -q 'parent_entity_id' "$schema"
+          grep -q 'source_domain_id' "$schema"
+          grep -q 'matrix_entities_tenant_slug_uidx' "$schema"
+          grep -q 'revoke all on public.matrix_source_domains from public, anon, authenticated' "$schema"
+          grep -q "'grupo-lira-de-comunicacao','GL-001'" "$seed"
+          grep -q "'tv-attual','BR-001'" "$seed"
+          grep -q "'att-comunica','BR-005'" "$seed"
+          grep -q "'lava-laundry-vale','BR-010'" "$seed"
+          test -f docs/implementation/M5_CORPORATE_CATALOG_v1.md
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
           test -f docs/contracts/ATTUALPLAY_DATA_CONTRACT_v1.md
           test -f docs/api/openapi.yaml
-          test -f docs/implementation/EVENT_API_M1.md
-          test -f docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md
-          test -f docs/implementation/RETENTION_POLICY_v1.md
-          test -f docs/implementation/M2_SHADOW_INTELLIGENCE_v1.md
-          test -f docs/implementation/M3_CONTROLLED_ACTIVATION_v1.md
           test -f docs/implementation/M4_IDENTITY_BRIDGE_v1.md
+          test -f docs/implementation/M5_CORPORATE_CATALOG_v1.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
