@@ -28,6 +28,7 @@ export const eventEnvelopeSchema = z
         analytics: z.boolean().optional(),
         personalization: z.boolean().optional(),
         marketing: z.boolean().optional(),
+        adult_confirmed: z.boolean().optional(),
         policy_version: z.string().max(80).optional(),
       })
       .strict()
