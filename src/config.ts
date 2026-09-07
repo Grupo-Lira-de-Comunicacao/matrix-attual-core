@@ -24,6 +24,10 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
+function optional(env: NodeJS.ProcessEnv, name: string): string {
+  return String(env[name] ?? "").trim();
+}
+
 function parseOrigins(value: string): string[] {
   return value
     .split(",")
@@ -38,18 +42,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   const publishableKey = required(env, "MATRIX_ATTUALPLAY_PUBLIC_KEY");
   if (publishableKey.length < 16) throw new Error("MATRIX_ATTUALPLAY_PUBLIC_KEY is too short");
 
-  const attualOneIntegrationSecret = required(env, "MATRIX_ATTUAL_ONE_INTEGRATION_SECRET");
-  const m4InternalKey = required(env, "MATRIX_M4_INTERNAL_KEY");
-  if (attualOneIntegrationSecret.length < 24 || m4InternalKey.length < 24) {
-    throw new Error("M4 server-only keys are too short");
+  // M4 integrations are fail-closed until their server-only credentials are provisioned.
+  // Missing M4 variables must not take the already-operational M0-M3 API offline.
+  const attualOneIntegrationSecret = optional(env, "MATRIX_ATTUAL_ONE_INTEGRATION_SECRET");
+  const m4InternalKey = optional(env, "MATRIX_M4_INTERNAL_KEY");
+  const attualOneSignalUrl = optional(env, "MATRIX_ATTUAL_ONE_SIGNAL_URL");
+  const attualOneLinkCallbackUrl = optional(env, "MATRIX_ATTUAL_ONE_LINK_CALLBACK_URL");
+
+  if (attualOneIntegrationSecret && attualOneIntegrationSecret.length < 24) {
+    throw new Error("MATRIX_ATTUAL_ONE_INTEGRATION_SECRET is too short");
+  }
+  if (m4InternalKey && m4InternalKey.length < 24) {
+    throw new Error("MATRIX_M4_INTERNAL_KEY is too short");
   }
 
   return {
     supabaseUrl: required(env, "MATRIX_SUPABASE_URL").replace(/\/$/, ""),
     dbAdminKey: required(env, "MATRIX_DB_ADMIN_KEY"),
     attualOneIntegrationSecret,
-    attualOneSignalUrl: required(env, "MATRIX_ATTUAL_ONE_SIGNAL_URL"),
-    attualOneLinkCallbackUrl: required(env, "MATRIX_ATTUAL_ONE_LINK_CALLBACK_URL"),
+    attualOneSignalUrl,
+    attualOneLinkCallbackUrl,
     m4InternalKey,
     clients: {
       attualplay: {
