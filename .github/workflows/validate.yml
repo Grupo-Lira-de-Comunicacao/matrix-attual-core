@@ -26,8 +26,9 @@ jobs:
           test -f supabase/migrations/016_matrix_retention_policy.sql
           test -f supabase/migrations/017_matrix_m2_shadow_intelligence.sql
           test -f supabase/migrations/018_matrix_m2_shadow_smoke.sql
+          test -f supabase/migrations/019_matrix_m2_shadow_smoke.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 18
+          test "$count" -eq 19
       - name: Verify retention safety contract
         run: |
           set -e
@@ -62,10 +63,19 @@ jobs:
             echo 'M2 must remain shadow-only.'
             exit 1
           fi
-      - name: Verify M2 reversible production smoke contract
+      - name: Verify M2 UUID hotfix contract
         run: |
           set -e
           file=supabase/migrations/018_matrix_m2_shadow_smoke.sql
+          grep -q 'm2_function_hotfix' "$file"
+          grep -q 'null::uuid' "$file"
+          grep -q 'pg_get_functiondef' "$file"
+          grep -q 'matrix_run_m2_shadow' "$file"
+          grep -q "revoke all on function public.matrix_run_m2_shadow" "$file"
+      - name: Verify M2 reversible production smoke contract
+        run: |
+          set -e
+          file=supabase/migrations/019_matrix_m2_shadow_smoke.sql
           grep -q 'matrix-m2-production-smoke' "$file"
           grep -q "v_radio_score <> 2.5000" "$file"
           grep -q "v_tv_score <> 1.5000" "$file"
