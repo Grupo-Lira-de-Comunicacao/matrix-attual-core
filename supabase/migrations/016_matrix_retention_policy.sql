@@ -43,7 +43,6 @@ begin
     raise exception 'retention windows are below Matrix safety minimums';
   end if;
 
-  -- Remove event dependents before raw events so foreign keys remain intact.
   delete from public.matrix_recommendation_feedback rf
   using public.matrix_events e
   where rf.event_id = e.id
@@ -66,12 +65,10 @@ begin
   where received_at < p_now - make_interval(days => p_event_days);
   get diagnostics v_events_deleted = row_count;
 
-  -- DLQ payloads can contain copies of event data, so they are also bounded.
   delete from public.matrix_dead_letter_events
   where coalesce(resolved_at, last_failed_at) < p_now - make_interval(days => p_dlq_days);
   get diagnostics v_dlq_deleted = row_count;
 
-  -- Anonymous recommendations are disposable after expiry or the same inactivity window.
   delete from public.matrix_recommendations
   where anonymous_profile_id is not null
     and (
@@ -80,7 +77,6 @@ begin
     );
   get diagnostics v_recommendations_deleted = row_count;
 
-  -- Remove stale anonymous linkage only when no raw event remains for that profile.
   delete from public.matrix_identity_links il
   using public.matrix_anonymous_profiles ap
   where il.anonymous_profile_id = ap.id
@@ -111,7 +107,6 @@ begin
     );
   get diagnostics v_anonymous_deleted = row_count;
 
-  -- Keep operational audit longer than analytics, but never indefinitely.
   delete from public.matrix_audit_log
   where created_at < p_now - make_interval(days => p_audit_days);
   get diagnostics v_audit_deleted = row_count;
@@ -171,5 +166,25 @@ select cron.schedule(
   '17 3 * * *',
   $cron$select public.matrix_run_retention();$cron$
 );
+
+do $verify$
+begin
+  if not exists (
+    select 1
+    from cron.job
+    where jobname = 'matrix-retention-daily-v1'
+      and active is true
+      and schedule = '17 3 * * *'
+  ) then
+    raise exception 'Matrix retention cron was not installed as expected';
+  end if;
+
+  if has_function_privilege('anon', 'public.matrix_run_retention(timestamptz,integer,integer,integer,integer)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.matrix_run_retention(timestamptz,integer,integer,integer,integer)', 'EXECUTE')
+     or has_function_privilege('service_role', 'public.matrix_run_retention(timestamptz,integer,integer,integer,integer)', 'EXECUTE') then
+    raise exception 'Matrix retention function has an unexpected executable role';
+  end if;
+end;
+$verify$;
 
 commit;
