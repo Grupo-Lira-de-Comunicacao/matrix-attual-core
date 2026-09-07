@@ -24,8 +24,9 @@ jobs:
           test -f supabase/migrations/014_matrix_seed_core.sql
           test -f supabase/migrations/015_matrix_service_role_grants.sql
           test -f supabase/migrations/016_matrix_retention_policy.sql
+          test -f supabase/migrations/017_matrix_m2_shadow_intelligence.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 16
+          test "$count" -eq 17
       - name: Verify retention safety contract
         run: |
           set -e
@@ -39,6 +40,27 @@ jobs:
             echo 'Retention function must not be executable by client or service roles.'
             exit 1
           fi
+      - name: Verify M2 shadow intelligence safety contract
+        run: |
+          set -e
+          file=supabase/migrations/017_matrix_m2_shadow_intelligence.sql
+          grep -q 'matrix_run_m2_shadow' "$file"
+          grep -q 'm2-shadow-rules-v1' "$file"
+          grep -q 'matrix-m2-shadow-v1' "$file"
+          grep -q "recommendation_type = 'topic_affinity_shadow'" "$file"
+          grep -q "'personalization_exposed', false" "$file"
+          grep -q "'marketing_enabled', false" "$file"
+          grep -q "revoke all on function public.matrix_run_m2_shadow" "$file"
+          grep -q "e.consent_snapshot ->> 'analytics' = 'true'" "$file"
+          grep -q "e.consent_snapshot ->> 'adult_confirmed' = 'true'" "$file"
+          if grep -Ei 'grant[[:space:]]+execute.*(public|anon|authenticated|service_role)' "$file"; then
+            echo 'M2 shadow engine must not be executable by client or service roles.'
+            exit 1
+          fi
+          if grep -Ei "recommendation_type[^\n]*(marketing|campaign)|status[^\n]*active.*topic_affinity" "$file"; then
+            echo 'M2 must remain shadow-only.'
+            exit 1
+          fi
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
@@ -47,6 +69,7 @@ jobs:
           test -f docs/implementation/EVENT_API_M1.md
           test -f docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md
           test -f docs/implementation/RETENTION_POLICY_v1.md
+          test -f docs/implementation/M2_SHADOW_INTELLIGENCE_v1.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
