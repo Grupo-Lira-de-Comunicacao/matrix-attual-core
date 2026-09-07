@@ -27,8 +27,9 @@ jobs:
           test -f supabase/migrations/017_matrix_m2_shadow_intelligence.sql
           test -f supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
           test -f supabase/migrations/019_matrix_m2_shadow_smoke.sql
+          test -f supabase/migrations/020_matrix_m3_controlled_activation.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 19
+          test "$count" -eq 20
       - name: Verify retention safety contract
         run: |
           set -e
@@ -59,10 +60,6 @@ jobs:
             echo 'M2 shadow engine must not be executable by client or service roles.'
             exit 1
           fi
-          if grep -Ei "recommendation_type[^\n]*(marketing|campaign)|status[^\n]*active.*topic_affinity" "$file"; then
-            echo 'M2 must remain shadow-only.'
-            exit 1
-          fi
       - name: Verify M2 UUID hotfix contract
         run: |
           set -e
@@ -87,8 +84,30 @@ jobs:
           grep -q 'matrix_m2_production_smoke_cleanup' "$file"
           grep -q "'invalidation_verified', true" "$file"
           grep -q "'synthetic_fixtures_removed', true" "$file"
-          grep -q "'personalization_exposed', false" "$file"
-          grep -q "'marketing_enabled', false" "$file"
+      - name: Verify M3 controlled activation safety contract
+        run: |
+          set -e
+          file=supabase/migrations/020_matrix_m3_controlled_activation.sql
+          grep -q 'matrix_m3_policies' "$file"
+          grep -q 'matrix_m3_quality_snapshots' "$file"
+          grep -q 'matrix_m3_action_outbox' "$file"
+          grep -q 'matrix_run_m3_control' "$file"
+          grep -q 'matrix-m3-control-v1' "$file"
+          grep -q "'m3-policy-v1'" "$file"
+          grep -q 'personalization_requires_opt_in' "$file"
+          grep -q 'downstream_requires_identified_person' "$file"
+          grep -q 'marketing_enabled' "$file"
+          grep -q 'n8n_external_actions_enabled' "$file"
+          grep -q "revoke all on function public.matrix_run_m3_control" "$file"
+          if grep -Ei 'grant[[:space:]]+execute.*matrix_run_m3_control.*(public|anon|authenticated|service_role)' "$file"; then
+            echo 'M3 control function must not be executable by client or service roles.'
+            exit 1
+          fi
+          grep -q 'adult_confirmed: z.boolean().optional()' src/events/schema.ts
+          grep -q 'recommendations:read' src/config.ts
+          grep -q '/v1/recommendations/query' src/app.ts
+          grep -q 'personalization: z.literal(true)' src/app.ts
+          grep -q 'marketing_not_enabled' src/app.ts
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
@@ -98,6 +117,7 @@ jobs:
           test -f docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md
           test -f docs/implementation/RETENTION_POLICY_v1.md
           test -f docs/implementation/M2_SHADOW_INTELLIGENCE_v1.md
+          test -f docs/implementation/M3_CONTROLLED_ACTIVATION_v1.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
