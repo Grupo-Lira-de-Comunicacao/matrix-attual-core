@@ -62,10 +62,6 @@ async function parseJsonBody(request: Request, maxBodyBytes: number): Promise<un
   }
 }
 
-function safeM4Error(c: Parameters<ReturnType<typeof createApp>["fetch"]>[0] extends never ? never : never) {
-  return c;
-}
-
 export function createApp(options: AppOptions = {}) {
   const config = options.config ?? loadConfig();
   const repository = options.repository ?? new SupabaseMatrixRepository(config);
