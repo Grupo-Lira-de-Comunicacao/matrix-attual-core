@@ -153,7 +153,6 @@ declare
   v_snapshots integer := 0;
   v_outbox integer := 0;
 begin
-  -- Expire decisions whose recommendation window elapsed.
   update public.matrix_m3_decisions
   set decision_status = 'expired'
   where decision_status = 'eligible'
@@ -164,7 +163,6 @@ begin
     from public.matrix_m3_policies
     where status = 'active'
   loop
-    -- Evaluate only the latest live M2 shadow recommendation for each subject.
     insert into public.matrix_m3_decisions (
       tenant_id, project_id, recommendation_id, person_id, anonymous_profile_id,
       policy_version, decision_status, top_topic_key, top_score, top_confidence,
@@ -240,14 +238,11 @@ begin
       (select count(*)::integer from public.matrix_events e where e.project_id=v_policy.project_id and e.received_at >= p_now - interval '24 hours' and e.event_type='recommendation_shown'),
       (select count(*)::integer from public.matrix_events e where e.project_id=v_policy.project_id and e.received_at >= p_now - interval '24 hours' and e.event_type='recommendation_clicked'),
       (select count(*)::integer from public.matrix_event_invalidations i join public.matrix_events e on e.id=i.event_id where e.project_id=v_policy.project_id and i.created_at >= p_now - interval '24 hours'),
-      (select count(*)::integer from public.matrix_dlq q where q.project_id=v_policy.project_id and q.status in ('pending','retrying')),
+      (select count(*)::integer from public.matrix_dead_letter_events q left join public.matrix_events e on e.id=q.original_event_id where q.resolved_at is null and (e.project_id=v_policy.project_id or q.original_event_id is null)),
       p_now;
 
     v_snapshots := v_snapshots + 1;
 
-    -- Downstream outbox is intentionally fail-closed: only an identified person with an
-    -- explicit current personalization opt-in can produce a qualified signal. M2's
-    -- anonymous-only pilot therefore cannot silently enrich CRM or trigger n8n.
     if not v_policy.marketing_enabled and not v_policy.n8n_external_actions_enabled then
       insert into public.matrix_m3_action_outbox (
         tenant_id, project_id, decision_id, person_id, destination, action_type,
@@ -355,7 +350,6 @@ select cron.schedule(
   $cron$select public.matrix_run_m3_control(now());$cron$
 );
 
--- Initial controlled evaluation. This only creates internal decisions/metrics.
 select public.matrix_run_m3_control(now());
 
 commit;
