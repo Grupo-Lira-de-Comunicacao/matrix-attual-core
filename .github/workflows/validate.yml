@@ -25,7 +25,7 @@ jobs:
           test -f supabase/migrations/015_matrix_service_role_grants.sql
           test -f supabase/migrations/016_matrix_retention_policy.sql
           test -f supabase/migrations/017_matrix_m2_shadow_intelligence.sql
-          test -f supabase/migrations/018_matrix_m2_shadow_smoke.sql
+          test -f supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
           test -f supabase/migrations/019_matrix_m2_shadow_smoke.sql
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
           test "$count" -eq 19
@@ -66,7 +66,7 @@ jobs:
       - name: Verify M2 UUID hotfix contract
         run: |
           set -e
-          file=supabase/migrations/018_matrix_m2_shadow_smoke.sql
+          file=supabase/migrations/018_matrix_m2_shadow_uuid_hotfix.sql
           grep -q 'm2_function_hotfix' "$file"
           grep -q 'null::uuid' "$file"
           grep -q 'pg_get_functiondef' "$file"
