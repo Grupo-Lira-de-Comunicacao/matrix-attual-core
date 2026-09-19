@@ -157,3 +157,12 @@ Nao bloqueiam M5 v2:
 ## Conclusao
 
 MATRIX ATTUAL M5 CORPORATE CATALOG v2: CONCLUIDA E VALIDADA EM PRODUCAO.
+
+
+## Atualizacao M4 server-to-server — 2026-09-19
+
+O ciclo seguinte ao M5 confirmou que AttualPlay e Attual One ja possuem o codigo M4 necessario em producao. A capacidade de telemetria do AttualPlay foi habilitada com `VITE_MATRIX_TRACKING_ENABLED=true`, mantendo `VITE_MATRIX_ANALYTICS_DEFAULT=denied`, personalizacao opt-in e marketing desabilitado.
+
+Tambem foram provisionadas, como variaveis sensiveis de producao na Vercel, as credenciais server-to-server do M4 e a chave interna de observabilidade. As URLs de sinais e callback permanecem restritas aos endpoints M4 ja revisados do Attual One.
+
+Esta atualizacao documental força novo deployment do runtime para carregar as variaveis provisionadas. Nenhuma regra de consentimento, marketing ou acao externa foi ampliada.
