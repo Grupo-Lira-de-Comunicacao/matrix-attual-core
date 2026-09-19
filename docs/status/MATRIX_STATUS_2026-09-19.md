@@ -1,91 +1,159 @@
-# MATRIX ATTUAL — STATUS DE CONSOLIDACAO
+# MATRIX ATTUAL — STATUS FINAL DE CONSOLIDACAO
 
 Data: 2026-09-19  
 Escopo: Grupo Lira de Comunicacao / Matrix Attual  
-Branch de consolidacao: `codex/matrix-consolidation-2026-09-19`
+Status: CONCLUIDO — M5 CORPORATE CATALOG v2 EM PRODUCAO
 
-## Executive summary
+## Resultado
 
-Matrix Attual is a real implemented platform, not only an institutional concept. The repository contains M0–M5 contracts, 24 existing migrations, API code, consent controls, deterministic interest/recommendation logic, M4 identity bridge code and an M5 corporate catalog.
+A consolidacao da Matrix Attual foi concluida de ponta a ponta no escopo M5 v2.
 
-The consolidation found four main issues:
+## GitHub
 
-1. database state after M0 is not currently proven by read-back through the available Supabase connection;
-2. repository documentation is stale and still describes M1 as the current phase;
-3. M5 corporate catalog predates the current Grupo Lira architecture;
-4. runtime documentation points to VPS while the observed current production is Vercel.
+PR #14 foi validada e mesclada.
 
-## Verified evidence
+Baseline de consolidacao:
+`59a8e7e39bc6afc0f0043804845dadd17ac77043`
 
-### GitHub
-- repository: `Grupo-Lira-de-Comunicacao/matrix-attual-core`;
-- current main before this consolidation: `8d95ef529d6d7ef308f71f63079c4f768944dc40`;
-- CI `validate` succeeded on that SHA;
-- existing migrations: 001–024;
-- M2, M3, M4 and M5 implementation documents are present.
+O CI passou por:
+- verificacao de segredos obvios;
+- sequencia de migrations 001–025;
+- contratos de retencao;
+- M2;
+- M3;
+- M4;
+- M5;
+- contratos obrigatorios;
+- typecheck;
+- testes unitarios;
+- build da aplicacao;
+- build Docker.
 
-### Vercel
-- project: `matrix-attual-core`;
-- production state observed: READY;
-- framework: Hono;
-- current production SHA observed: `8d95ef529d6d7ef308f71f63079c4f768944dc40`.
+O repositorio permanece publico por decisao operacional.
 
-### AttualPlay
-- Matrix telemetry client exists;
-- consent defaults to denied;
-- personalization is independently gated;
-- M3 recommendation UI exists;
-- a production deployment exists for M3 opt-in personalization;
-- M4 client work exists in preview deployments and must not be treated as fully promoted end to end.
+## Supabase Matrix
 
-### ATLAS
-- ATLAS itself is healthy;
-- Matrix is not yet a first-class ATLAS provider/capability namespace;
-- current ChatGPT connector surface remains blocked for the universal executor;
-- this consolidation does not weaken or bypass ATLAS governance.
+Projeto:
+`matrixattual`
 
-### Google Drive
-- institutional folder `10_INSTITUCIONAL/MATRIX ATTUAL` exists;
-- it was empty at the beginning of this consolidation.
+Project ref:
+`fdmvvxsdfanqarokastv`
 
-## Supabase limitation
+O acesso de producao foi obtido pelo caminho governado:
 
-The currently connected Supabase account/tool does not expose project `matrixattual` (`fdmvvxsdfanqarokastv`). Therefore this consolidation does not claim that migrations 015–024 are currently applied in production.
+`ATLAS -> Credential Broker -> Supabase Management API`
 
-CI verifies repository contracts; it does not apply database migrations.
+Nenhuma credencial foi impressa ou registrada na evidencia.
 
-## Consolidation changes prepared
+### Historico real
 
-- README updated from stale M1 wording to current M0–M5 status;
-- new M5 v2 corporate contract;
-- migration 025 for corporate catalog reconciliation;
-- CI migration sequence updated to 001–025;
-- explicit runtime decision: Vercel current, VPS contingency;
-- explicit separation of Matrix, ATLAS, CRM, Plataforma Attual, Drive, GitHub, n8n and Infisical.
+Read-back confirmou:
+- matrix_m0_foundation_v1
+- matrix_015_service_role_grants
+- 016_matrix_retention_policy
+- 017_matrix_m2_shadow_intelligence
+- 018_matrix_m2_shadow_uuid_hotfix
+- 019_matrix_m2_shadow_smoke
+- 020_matrix_m3_controlled_activation
+- 021_matrix_m4_identity_bridge
+- 022_matrix_m4_api_grants_and_guards
 
-## Database gate
+M5 ainda nao estava no banco. Foram entao aplicadas, nessa ordem:
+- 023_matrix_corporate_catalog
+- 024_matrix_corporate_catalog_seed
+- 025_matrix_corporate_catalog_v2
 
-Migration 025 must not be applied until the Matrix Supabase project is reachable for read-back.
+As tres migrations foram verificadas por Git blob contra o SHA aprovado antes da aplicacao.
 
-## ATLAS gate
+## Catalogo M5 v2
 
-Read-only Matrix capabilities are recommended:
+Read-back final:
+- 30 entidades corporativas;
+- 9 dominios de source-of-truth;
+- Matrix Attual subordinada ao Grupo Lira;
+- seis nucleos subordinados a Matrix;
+- marcas, plataformas, projetos e ACCA corretamente associados aos nucleos.
 
-- `matrix.health`
-- `matrix.ready`
-- `matrix.catalog.list`
-- `matrix.catalog.entity_get`
-- `matrix.m2.status`
-- `matrix.m3.observability`
-- `matrix.m4.observability`
-- `matrix.retention.status`
+Nucleos:
+- Midia
+- Servicos
+- Negocios
+- Cultura e Entretenimento
+- Tecnologia
+- Terceiro Setor
 
-They should be introduced through the canonical capability path after the current client-surface limitation is resolved or through another governed ATLAS session. No generic shell or bypass is authorized.
+AttualPlay permanece como plataforma irma dentro de Midia.
 
-## Marketing invariant
+## Source-of-truth
 
-Marketing automation, outbound n8n actions and anonymous CRM enrichment remain disabled.
+Ativos:
+- contextual -> Matrix
+- relationship -> ATTUAL CRM
+- operations -> Attual One / Plataforma Attual
+- documents -> Google Drive
+- technical -> GitHub
+- execution -> ATLAS
+- automation -> n8n
+- secrets -> Infisical
+- runtime -> Vercel
 
-## Remaining external dependency
+## Seguranca
 
-Administrative visibility/read-back for Supabase project `matrixattual` is the only required dependency to close the database side of this consolidation.
+Read-back confirmou:
+- RLS ativo em matrix_source_domains;
+- anon sem SELECT;
+- authenticated sem SELECT;
+- M3 personalization_requires_opt_in = true;
+- M3 downstream_requires_identified_person = true;
+- marketing_enabled = false;
+- n8n_external_actions_enabled = false.
+
+Jobs ativos:
+- matrix-retention-daily-v1
+- matrix-m2-shadow-v1
+- matrix-m3-control-v1
+
+M4:
+- person_sessions = 0;
+- bridge_tokens = 0.
+
+Isso e consistente com M4 ainda nao promovido amplamente no cliente.
+
+## Runtime
+
+Vercel:
+- projeto: matrix-attual-core;
+- producao READY;
+- endpoint /health = HTTP 200;
+- endpoint /ready = HTTP 200.
+
+A metadata de health foi atualizada de M4/v0.4.0 para M5/v0.5.0 como parte do fechamento documental/operacional.
+
+## Google Drive
+
+A pasta institucional MATRIX ATTUAL foi populada com:
+1. Arquitetura e Governanca;
+2. Status de Consolidacao;
+3. Catalogo Corporativo v2.
+
+## ATLAS
+
+ATLAS permaneceu com governanca preservada:
+- Objective Scope;
+- N4_ROOT;
+- confirmacao APROVO;
+- Credential Broker;
+- nenhum shell automatico irrestrito;
+- nenhum acesso a VPS1.
+
+## Pendencias fora deste fechamento
+
+Nao bloqueiam M5 v2:
+- concluir M4 ponta a ponta no AttualPlay;
+- confirmar/monitorar telemetria de producao do AttualPlay;
+- criar namespace/capabilities Matrix read-only no ATLAS quando a superficie cliente estiver disponivel;
+- qualquer ativacao futura de marketing exige gate separado.
+
+## Conclusao
+
+MATRIX ATTUAL M5 CORPORATE CATALOG v2: CONCLUIDA E VALIDADA EM PRODUCAO.
