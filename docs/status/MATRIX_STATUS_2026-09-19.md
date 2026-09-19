@@ -149,9 +149,8 @@ ATLAS permaneceu com governanca preservada:
 ## Pendencias fora deste fechamento
 
 Nao bloqueiam M5 v2:
-- concluir M4 ponta a ponta no AttualPlay;
-- confirmar/monitorar telemetria de producao do AttualPlay;
-- criar namespace/capabilities Matrix read-only no ATLAS quando a superficie cliente estiver disponivel;
+- executar a primeira validacao M4 ponta a ponta com uma conta humana autenticada e consentimento explicito;
+- observar os primeiros eventos reais consentidos do AttualPlay;
 - qualquer ativacao futura de marketing exige gate separado.
 
 ## Conclusao
@@ -166,3 +165,50 @@ O ciclo seguinte ao M5 confirmou que AttualPlay e Attual One ja possuem o codigo
 Tambem foram provisionadas, como variaveis sensiveis de producao na Vercel, as credenciais server-to-server do M4 e a chave interna de observabilidade. As URLs de sinais e callback permanecem restritas aos endpoints M4 ja revisados do Attual One.
 
 Esta atualizacao documental força novo deployment do runtime para carregar as variaveis provisionadas. Nenhuma regra de consentimento, marketing ou acao externa foi ampliada.
+
+
+## Fechamento técnico adicional — 2026-09-19
+
+### Capabilities Matrix no ATLAS
+
+Confirmadas como disponíveis, N1, automáticas, read-only, tipadas e universalmente executáveis:
+
+- `matrix.health`
+- `matrix.ready`
+- `matrix.catalog.list`
+- `matrix.m4.status`
+- `matrix.telemetry.status`
+
+Logo, não há mais implantação pendente de namespace Matrix no catálogo ATLAS.
+
+### Telemetria AttualPlay
+
+A capacidade técnica de tracking está ativa em produção, com:
+
+- `VITE_MATRIX_TRACKING_ENABLED=true`;
+- analytics negado por padrão;
+- confirmação 18+ obrigatória para analytics;
+- personalização em opt-in separado;
+- marketing desabilitado.
+
+O read-back final permaneceu sem novos eventos nas 24h e sem sessões M4, demonstrando que a ativação técnica não concede consentimento automaticamente.
+
+### M4 canonical endpoint
+
+O host canônico do ATTUAL ONE para integração M4 é `https://app.attualone.com.br`.
+
+Endpoints:
+
+- `POST /api/integrations/matrix/links`
+- `POST /api/integrations/matrix/signals`
+
+Provas:
+
+- o host canônico responde HTTP 401 a probes POST sem credencial;
+- `https://attualone.com.br` responde HTTP 307 redirecionando para `app.attualone.com.br`;
+- o hostname histórico `attual-one-platform.vercel.app` respondeu HTTP 404 e foi removido da configuração Matrix;
+- os dois environment URLs da Matrix foram corrigidos sem alterar segredos.
+
+### Limite humano restante
+
+Tudo que pode ser validado sem personificar um usuário está concluído. A única prova funcional não executada é a jornada humana M4 completa, que deve partir de uma conta autenticada e de consentimento explícito real.
