@@ -81,7 +81,7 @@ export function createApp(options: AppOptions = {}) {
   app.use("/v1/identity*", publicCors);
   app.use("/v1/consents*", publicCors);
 
-  app.get("/health", (c) => c.json({ status: "ok", service: "matrix-event-api", version: "0.4.0", milestone: "M4" }));
+  app.get("/health", (c) => c.json({ status: "ok", service: "matrix-event-api", version: "0.5.0", milestone: "M5" }));
 
   app.get("/ready", async (c) => {
     const ready = await repository.ready();
