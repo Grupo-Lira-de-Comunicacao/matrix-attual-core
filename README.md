@@ -4,19 +4,38 @@ Nucleo tecnico da Matrix Attual: identidade, consentimento, eventos, relacioname
 
 ## Status consolidado — 2026-09-19
 
-**Fase funcional implementada no repositorio:** M0–M5.  
-**Runtime atual observado:** Vercel, projeto `matrix-attual-core`, producao READY.  
-**Supabase alvo:** `matrixattual` (`fdmvvxsdfanqarokastv`).  
-**Read-back atual do banco:** pendente de conexao administrativa ao projeto Matrix; a presenca das migrations no Git e o CI verde nao substituem a verificacao do schema aplicado.
+**Fase funcional em producao:** M0–M5 v2.  
+**Runtime atual:** Vercel, projeto `matrix-attual-core`, producao READY.  
+**Supabase:** `matrixattual` (`fdmvvxsdfanqarokastv`).  
+**Banco verificado por read-back:** sim, em 2026-09-19, via caminho governado ATLAS -> Credential Broker -> Supabase Management API.
 
 ### Estado por marco
 
-- M0 Foundation: historicamente aplicada e validada em 2026-09-06.
+- M0 Foundation: aplicada e historicamente validada em 2026-09-06.
 - M1 Event API: implementada.
-- M2 Shadow Intelligence: contratos, migrations e engine versionados.
-- M3 Controlled Activation: backend implementado e cliente AttualPlay M3 promovido a producao.
-- M4 Identity Bridge: backend implementado; ativacao ponta a ponta deve permanecer controlada ate validacao de producao.
-- M5 Corporate Catalog: implementado; consolidacao corporativa v2 proposta pela migration `025`.
+- M2 Shadow Intelligence: aplicada; cron `matrix-m2-shadow-v1` ativo.
+- M3 Controlled Activation: aplicada; cron `matrix-m3-control-v1` ativo; marketing e acoes externas n8n permanecem desabilitados.
+- M4 Identity Bridge: backend aplicado; ativacao cliente ponta a ponta permanece controlada.
+- M5 Corporate Catalog v2: migrations 023, 024 e 025 aplicadas e validadas em 2026-09-19.
+
+## Evidencia de producao
+
+Historico do banco apos consolidacao:
+
+- `matrix_m0_foundation_v1`;
+- `matrix_015_service_role_grants`;
+- `016_matrix_retention_policy`;
+- `017_matrix_m2_shadow_intelligence`;
+- `018_matrix_m2_shadow_uuid_hotfix`;
+- `019_matrix_m2_shadow_smoke`;
+- `020_matrix_m3_controlled_activation`;
+- `021_matrix_m4_identity_bridge`;
+- `022_matrix_m4_api_grants_and_guards`;
+- `023_matrix_corporate_catalog`;
+- `024_matrix_corporate_catalog_seed`;
+- `025_matrix_corporate_catalog_v2`.
+
+O catalogo corporativo v2 possui 30 entidades e 9 dominios de source-of-truth.
 
 ## Principios
 
@@ -60,28 +79,33 @@ Infisical guarda segredos.
 - `tenant_id` e `project_id` desde a fundacao;
 - eventos append-only e idempotentes;
 - consentimento separado para analytics e personalizacao;
-- marketing permanece desabilitado nos marcos M2–M4;
+- marketing permanece desabilitado;
+- acoes externas n8n permanecem desabilitadas no fluxo Matrix;
 - nenhuma inferencia de atributos sensiveis;
-- RLS deny-by-default nas tabelas Matrix;
-- retencao configurada para minimizar telemetria pseudonima;
+- RLS ativo no catalogo M5;
+- `anon` e `authenticated` nao possuem SELECT em `matrix_source_domains`;
+- retencao automatica ativa;
 - identidade M4 exige ligacao explicita, auditavel e revogavel;
 - nenhum segredo deve ser commitado neste repositorio.
 
 ## Catalogo corporativo
 
-M5 usa `matrix_entities` e `matrix_relationships` como memoria corporativa contextual, sem duplicar os datasets operacionais de outros sistemas.
+M5 usa `matrix_entities` e `matrix_relationships` como memoria corporativa contextual, sem duplicar datasets operacionais.
 
-A consolidacao v2 de 2026-09-19 organiza:
+Hierarquia consolidada:
 
-- Grupo Lira de Comunicacao;
-- Matrix Attual;
-- Midia;
-- Servicos;
-- Negocios;
-- Cultura e Entretenimento;
-- Tecnologia;
-- Terceiro Setor;
-- marcas, plataformas e projetos atuais do ecossistema.
+```text
+Grupo Lira de Comunicacao
+  -> Matrix Attual
+      -> Midia
+      -> Servicos
+      -> Negocios
+      -> Cultura e Entretenimento
+      -> Tecnologia
+      -> Terceiro Setor
+```
+
+AttualPlay permanece como plataforma irma dentro de Midia.
 
 Detalhes: `docs/implementation/M5_CORPORATE_CATALOG_v2.md`.
 
@@ -91,21 +115,15 @@ Detalhes: `docs/implementation/M5_CORPORATE_CATALOG_v2.md`.
 Vercel / projeto `matrix-attual-core`.
 
 ### Alternativa controlada
-O documento `docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md` descreve um runtime em VPS 02. Ele deve ser tratado como runbook de contingencia/migracao e nao como prova de que a producao atual roda na VPS.
+`docs/implementation/VPS_RUNTIME_RUNBOOK_v1.md` e contingencia/migracao, nao o runtime canonico atual.
 
-## Supabase alvo
+## Repositorio
 
-- project: `matrixattual`
-- project_ref: `fdmvvxsdfanqarokastv`
-- credenciais administrativas: somente server-side e por fonte governada.
-
-A aplicacao de migrations em producao deve ser comprovada por read-back do banco. O workflow de CI valida contratos, testes e build, mas nao aplica automaticamente migrations.
+O repositorio permanece publico por decisao operacional, compativel com as conexoes atualmente utilizadas. Segredos continuam fora do GitHub.
 
 ## Proximos gates
 
-1. read-back das migrations `001`–`025` no Supabase Matrix;
-2. aplicar `025` somente apos validacao de schema e backup adequado;
-3. confirmar flags/configuracao Matrix do AttualPlay em producao;
-4. validar M4 ponta a ponta antes de promocao ampla;
-5. adicionar observabilidade Matrix read-only ao ATLAS quando a superficie cliente permitir;
-6. manter marketing e acoes externas automaticas desligados ate gate separado.
+1. concluir M4 ponta a ponta no cliente AttualPlay antes de promocao ampla;
+2. confirmar/monitorar telemetria Matrix no AttualPlay em producao;
+3. adicionar capabilities Matrix read-only ao ATLAS quando a superficie cliente permitir;
+4. manter marketing e acoes externas automaticas desligados ate gate separado.
