@@ -116,3 +116,27 @@ M4 can be declared complete only after all of these are proven in production:
 ## Rollback boundary
 
 If M4 validation fails, the safe rollback is to disable M4 delivery/cron behavior, revoke active synthetic test sessions and suppress pending M4 outbox rows while preserving audit evidence. M2/M3 anonymous analytics and consent-gated in-app personalization can remain operational independently.
+
+
+## Production wiring — 2026-09-19
+
+The canonical ATTUAL ONE production host for M4 server-to-server delivery is:
+
+- link callback: `https://app.attualone.com.br/api/integrations/matrix/links`;
+- qualified signal inbox: `https://app.attualone.com.br/api/integrations/matrix/signals`.
+
+`https://attualone.com.br` redirects to `https://app.attualone.com.br` with HTTP 307. The historical hostname `https://attual-one-platform.vercel.app` is not a valid production route target and must not be used by Matrix.
+
+Unauthenticated POST probes against the canonical host return HTTP 401, confirming that the routes are present and fail closed before persistence.
+
+Production runtime status at this checkpoint:
+
+- Matrix API: READY;
+- ATTUAL ONE: READY;
+- AttualPlay: READY;
+- M4 shared server credential: provisioned as a sensitive production variable;
+- Matrix internal M4 key: provisioned as a sensitive production variable;
+- marketing remains disabled;
+- n8n external actions remain disabled.
+
+The remaining acceptance criteria that require an authenticated human account are intentionally not synthesized administratively: one-time bridge issuance, single-use consumption, consent ledger creation, identified promotion, signal association and revocation/unlink behavior.
