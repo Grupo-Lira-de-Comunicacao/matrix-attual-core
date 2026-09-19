@@ -212,3 +212,48 @@ Provas:
 ### Limite humano restante
 
 Tudo que pode ser validado sem personificar um usuário está concluído. A única prova funcional não executada é a jornada humana M4 completa, que deve partir de uma conta autenticada e de consentimento explícito real.
+
+
+## Aceitacao humana M4 — APROVADA em 2026-09-19
+
+A primeira jornada humana real de identidade foi concluida com sucesso, sem uso de identidade sintetica.
+
+Evidencias de producao:
+
+- 1 bridge token novo foi consumido com sucesso;
+- o codigo anterior exposto durante teste foi revogado e nao reutilizado;
+- 1 identity link ATTUAL ONE permanece ativo;
+- 1 person session permanece ativa;
+- consentimentos identificados de analytics e personalization estao granted;
+- o Attual One registrou callback `linked` recebido da Matrix;
+- o Attual One possui 1 matrix person link com status `linked`;
+- nenhum sinal comercial foi criado;
+- nenhum registro com `marketing_allowed=true`;
+- nenhum registro com `external_action_allowed=true`.
+
+Eventos reais apos o vinculo:
+
+- 3 `page_viewed`, todos associados a person_id;
+- 1 `radio_started`, associado a person_id;
+- os eventos continuam tambem associados ao perfil anonimo tecnico para continuidade/auditoria de contexto.
+
+Estado de processamento no momento do read-back:
+
+- 4 eventos recentes ainda estavam `pending`, aguardando o ciclo normal de processamento;
+- 0 M4 context promotions;
+- outbox M4 vazia.
+
+A ausencia de promotions/outbox nao representa falha: o mecanismo M4 so promove contexto e cria `qualified_interest_signal` quando existe recomendacao elegivel e evidencia suficiente segundo as regras M2/M3.
+
+Conclusao da aceitacao:
+
+- emissao de codigo temporario: PASS;
+- consumo unico do codigo: PASS;
+- sessao identificada: PASS;
+- consent ledger server-side: PASS;
+- callback Matrix -> ATTUAL ONE: PASS;
+- continuidade de eventos identificados: PASS;
+- fail-closed de marketing/acoes externas: PASS;
+- downstream qualified signal: NAO APLICAVEL AINDA por falta de evidencia comportamental suficiente.
+
+O M4 esta aceito para producao no escopo atual.
