@@ -257,3 +257,98 @@ Conclusao da aceitacao:
 - downstream qualified signal: NAO APLICAVEL AINDA por falta de evidencia comportamental suficiente.
 
 O M4 esta aceito para producao no escopo atual.
+
+
+## M6.1 — ATTUAL CRM read-only — ATIVO em 2026-09-19
+
+A primeira expansão da Matrix para o ecossistema corporativo foi ativada com ATTUAL CRM como fonte comercial em modo estritamente read-only.
+
+### Capability ATLAS
+
+`matrix.crm.snapshot`
+
+Estado em produção:
+- ATLAS: N1;
+- automática;
+- sem aprovação;
+- typed contract disponível;
+- universalmente executável;
+- read-only;
+- sem argumentos;
+- queries fixas;
+- Credential Broker;
+- sem PII;
+- sem identificadores de pessoas;
+- sem escrita no CRM;
+- sem escrita na Matrix;
+- sem ação externa.
+
+ATLAS production SHA:
+`f7e9618b0d2f9432c3306b4430541ac29bb60adf`
+
+### Fonte de verdade
+
+ATTUAL CRM continua sendo a fonte de verdade comercial.
+
+A Matrix não copia contatos, leads, tarefas ou conversas. O snapshot é consultado sob demanda pelo ATLAS e retorna somente contexto agregado.
+
+### Primeiro snapshot real validado
+
+Organização:
+- Grupo Lira de Comunicação;
+- contatos: 736;
+- leads: 736;
+- leads abertos: 690;
+- ganhos: 28;
+- perdidos: 18;
+- pipeline aberto: R$ 89.400,00;
+- tarefas: 4;
+- tarefas abertas: 4;
+- tarefas vencidas: 4.
+
+Pipeline `tv-attual-comercial`:
+- Novo lead: 342;
+- Contato iniciado: 198;
+- Qualificado: 0;
+- Diagnóstico: 0;
+- Proposta: 96;
+- Negociação: 54;
+- Aprovado: 0;
+- Ganho: 28;
+- Perdido: 18.
+
+A execução real retornou:
+- `native_typed_api=true`;
+- `health=ok`;
+- `contains_personal_data=false`;
+- `contains_user_identifiers=false`;
+- `read_only=true`;
+- `marketing_enabled=false`;
+- `external_actions_enabled=false`.
+
+### Fronteira preservada
+
+```text
+ATTUAL CRM
+  = source of truth comercial
+
+ATLAS
+  = leitura governada
+
+MATRIX
+  = contexto agregado sob demanda
+
+nenhuma transferência de autoridade
+nenhuma duplicação de PII
+nenhuma escrita automática
+```
+
+### Próximo gate
+
+Após estabilidade do snapshot:
+1. tendência temporal agregada;
+2. business units quando o CRM multiunidade estiver implementado;
+3. referência Matrix ↔ CRM somente por vínculo explícito/auditável;
+4. qualquer escrita Matrix -> CRM permanece fora deste gate.
+
+Marketing, mensagens, campanhas, leads e tarefas automáticas continuam desabilitados.
