@@ -20,12 +20,12 @@ jobs:
       - name: Verify migration sequence
         run: |
           set -e
-          for i in $(seq 1 24); do
+          for i in $(seq 1 25); do
             n=$(printf '%03d' "$i")
             test $(find supabase/migrations -maxdepth 1 -type f -name "${n}_*.sql" | wc -l) -eq 1
           done
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 24
+          test "$count" -eq 25
       - name: Verify retention safety contract
         run: |
           set -e
@@ -68,6 +68,7 @@ jobs:
           set -e
           schema=supabase/migrations/023_matrix_corporate_catalog.sql
           seed=supabase/migrations/024_matrix_corporate_catalog_seed.sql
+          consolidation=supabase/migrations/025_matrix_corporate_catalog_v2.sql
           grep -q 'matrix_source_domains' "$schema"
           grep -q 'parent_entity_id' "$schema"
           grep -q 'source_domain_id' "$schema"
@@ -77,7 +78,13 @@ jobs:
           grep -q "'tv-attual','BR-001'" "$seed"
           grep -q "'att-comunica','BR-005'" "$seed"
           grep -q "'lava-laundry-vale','BR-010'" "$seed"
+          grep -q "'matrix-attual'" "$consolidation"
+          grep -q "'caçapava-news'" "$consolidation"
+          grep -q "'atlas'" "$consolidation"
+          grep -q "'acca-sinal-livre'" "$consolidation"
+          grep -q "'femac-sp'" "$consolidation"
           test -f docs/implementation/M5_CORPORATE_CATALOG_v1.md
+          test -f docs/implementation/M5_CORPORATE_CATALOG_v2.md
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
@@ -85,6 +92,8 @@ jobs:
           test -f docs/api/openapi.yaml
           test -f docs/implementation/M4_IDENTITY_BRIDGE_v1.md
           test -f docs/implementation/M5_CORPORATE_CATALOG_v1.md
+          test -f docs/implementation/M5_CORPORATE_CATALOG_v2.md
+          test -f docs/status/MATRIX_STATUS_2026-09-19.md
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -92,7 +101,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Typecheck and unit tests
         run: npm run check
-      - name: Build VPS runtime
+      - name: Build application runtime
         run: npm run build:server
       - name: Build Docker image
         run: docker build -t matrix-attual-api:ci .
