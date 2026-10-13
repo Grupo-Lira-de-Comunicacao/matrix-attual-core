@@ -19,11 +19,12 @@ Identidades conceitualmente aprovadas: TV Attual; AttualPlay; Rádio Attual / We
 
 ## Fonte canônica
 Google Drive: https://drive.google.com/drive/folders/1ytWz4ZmN8H2J_FfYAPu3-to_ae-l65xj
-- 00_MANUAL_NORMAS_E_CATALOGO
-- 01_LOGOS_OFICIAIS_HOMOLOGADOS
-- 02_REFERENCIAS_A_CONFERIR
-- 03_AGUARDANDO_VALIDACAO
-- 04_HISTORICO_E_VERSOES
+- 00_MANUAL_DE_MARCA_E_DNA — Drive ID 1lRcbQq6mkf0QobCfhnbuNc8_0mB0o7L4; norma mestra: https://docs.google.com/document/d/14ZBYHluJCNC93BuGGX8jxFJJ4XiZNeM3RxhPuQqaD8M/edit
+- 01_LOGOS_HOMOLOGADOS — Drive ID 1df69D4AC1nWRg2qXYbsNRRe0hvbU71UM
+- 02_REFERENCIAS_EM_VALIDACAO — Drive ID 1n7xMPeF7DInSdNxIx9K4nNDBu5r_RDq_
+- 04_APLICACOES_E_MODELOS — Drive ID 1xQKhpkkJzzXvzqop3VVEaCRAnO6t1Sr5
+
+OBS: homologacao exige revisao do arquivo e confirmacao de versao, nao apenas o nome. Fontes historicas: https://drive.google.com/drive/folders/1oGIKdjPGvyoG_IqZ6Zq4Gpl0zZB_YXLK (LOGOS TV) e https://drive.google.com/drive/folders/1T-bB29FxeI7mbwXtleLye5Uf88mEqmfA (identidades anteriores), referencias a conferir.
 
 A existência de arquivo em 02_REFERENCIAS_A_CONFERIR não confere status oficial nem autoriza seu uso automático. Não utilizar mídia sem confirmação inequívoca.
 ## Aplicabilidade
