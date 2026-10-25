@@ -92,22 +92,29 @@ Infisical guarda segredos.
 
 M5 usa `matrix_entities` e `matrix_relationships` como memoria corporativa contextual, sem duplicar datasets operacionais.
 
-Hierarquia consolidada:
+Estrutura técnica M5 v2 historicamente aplicada: Matrix como contexto para núcleos e entidades. **Não é o organograma institucional aprovado em 29/09/2026.**
+
+Estrutura institucional canônica aprovada, preparada na migration 026 (não afirmar aplicada antes do read-back):
 
 ```text
-Grupo Lira de Comunicacao
-  -> Matrix Attual
-      -> Midia
-      -> Servicos
-      -> Negocios
-      -> Cultura e Entretenimento
-      -> Tecnologia
-      -> Terceiro Setor
+GRUPO LIRA DE COMUNICAÇÃO
+  |-- MÍDIA: TV Attual; Rádio Attual
+  |-- COMUNICAÇÃO E PRODUÇÃO: ATT Comunica; Studio Lira; Attual Records
+  |-- CULTURA, EVENTOS E PROJETOS: FEMAC-SP; Miss Caçapava; Taiada Fashion
+  |-- TECNOLOGIA E INOVAÇÃO: Lira Technology
+        |-- ATTUAL ONE
+        |-- ATTUAL AUTOPILOT
+        |-- ATTUAL DISPLAY / INDOOR
+        |-- ATTUAL CONECTA IMÓVEIS
+        |-- CASTING 360
+        |-- TV ATTUAL APP
+        |-- ATTUAL CONECTA SOCIAL
 ```
 
-AttualPlay permanece como plataforma irma dentro de Midia.
+Matrix e ATLAS são componentes técnicos, não níveis intermediários do organograma. Entidades e iniciativas legadas, como AttualPlay, permanecem no catálogo/contexto sem exclusão; não interpretar automaticamente como item da estrutura institucional.
 
-Detalhes: `docs/implementation/M5_CORPORATE_CATALOG_v2.md`.
+Referência histórica: `docs/implementation/M5_CORPORATE_CATALOG_v2.md`.
+Nova estrutura aprovada e rollout: `docs/implementation/M5_INSTITUTIONAL_STRUCTURE_20260929.md`.
 
 ## Runtime
 
