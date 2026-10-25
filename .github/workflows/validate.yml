@@ -20,12 +20,12 @@ jobs:
       - name: Verify migration sequence
         run: |
           set -e
-          for i in $(seq 1 25); do
+          for i in $(seq 1 26); do
             n=$(printf '%03d' "$i")
             test $(find supabase/migrations -maxdepth 1 -type f -name "${n}_*.sql" | wc -l) -eq 1
           done
           count=$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)
-          test "$count" -eq 25
+          test "$count" -eq 26
       - name: Verify retention safety contract
         run: |
           set -e
@@ -85,6 +85,14 @@ jobs:
           grep -q "'femac-sp'" "$consolidation"
           test -f docs/implementation/M5_CORPORATE_CATALOG_v1.md
           test -f docs/implementation/M5_CORPORATE_CATALOG_v2.md
+          inst=supabase/migrations/026_matrix_institutional_structure_20260929.sql
+          grep -q 'GL-ESTRUTURA-20260929' "$inst"
+          grep -q 'nucleo-comunicacao-producao' "$inst"
+          grep -q 'nucleo-cultura-eventos-projetos' "$inst"
+          grep -q 'lira-technology' "$inst"
+          grep -q 'institutional_chart' "$inst"
+          grep -q 'raise exception' "$inst"
+          test -f docs/implementation/M5_INSTITUTIONAL_STRUCTURE_20260929.md
       - name: Verify required contracts
         run: |
           test -f docs/events/EVENT_CATALOG_v1.md
