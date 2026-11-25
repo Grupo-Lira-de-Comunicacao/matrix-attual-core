@@ -82,6 +82,18 @@ export type PendingSignal = {
   attempts: number;
 };
 
+export type RevocationReceipt = {
+  matrix_person_id: string;
+  operation_id: string;
+  confirmed: boolean;
+};
+
+export type PendingRevocation = {
+  project: Pick<ProjectRef, "tenantId" | "projectId">;
+  matrix_person_id: string;
+  operation_id: string;
+};
+
 export interface MatrixRepository {
   resolveProject(projectKey: string): Promise<ProjectRef>;
   upsertAnonymous(project: ProjectRef, anonymousId: string): Promise<string>;
@@ -93,16 +105,19 @@ export interface MatrixRepository {
   createIdentityBridge(project: ProjectRef, externalAccountRef: string, correlationId: string): Promise<IdentityBridgeIssue>;
   consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult>;
   syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null>;
-  unlinkPerson(project: ProjectRef, personToken: string, correlationId: string): Promise<{ matrix_person_id: string } | null>;
+  unlinkPerson(project: ProjectRef, personToken: string): Promise<RevocationReceipt | null>;
+  confirmRevocation(project: PendingRevocation["project"], operationId: string): Promise<void>;
+  claimPendingRevocations(limit: number): Promise<PendingRevocation[]>;
   listPendingAttualOneSignals(limit: number): Promise<PendingSignal[]>;
-  markSignalDelivered(id: string): Promise<void>;
+  getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible">;
+  markSignalSuppressed(id: string, reason: string): Promise<boolean>;
+  markSignalDelivered(id: string): Promise<boolean>;
   markSignalFailed(id: string, safeError: string): Promise<void>;
   m4Observability(): Promise<Record<string, unknown> | null>;
   ready(): Promise<boolean>;
 }
 
 const ANONYMOUS_RETENTION_DAYS = 90;
-const PERSON_SESSION_DAYS = 30;
 const BRIDGE_TTL_MINUTES = 10;
 
 function sha256(value: string): string {
@@ -197,18 +212,20 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     const now = new Date().toISOString();
     const session = await this.db
       .from("matrix_person_sessions")
-      .select("id,person_id")
+      .select("id,person_id,status,expires_at")
       .eq("tenant_id", project.tenantId)
       .eq("project_id", project.projectId)
       .eq("token_hash", sha256(personToken))
-      .eq("status", "active")
-      .gt("expires_at", now)
       .maybeSingle();
-    if (!session.error && session.data?.person_id) {
-      await this.db.from("matrix_person_sessions").update({ last_seen_at: now }).eq("id", session.data.id);
-      return String(session.data.person_id);
-    }
     if (session.error) throw new Error("person session resolution failed");
+    if (session.data) {
+      // A known revoked or expired M4 token is never a legacy bearer credential.
+      if (session.data.status !== "active" || !(Date.parse(session.data.expires_at) > Date.parse(now))) return null;
+      const touched = await this.db.from("matrix_person_sessions").update({ last_seen_at: now })
+        .eq("id", session.data.id).eq("status", "active").gt("expires_at", now).select("person_id").maybeSingle();
+      if (touched.error) throw new Error("person session revalidation failed");
+      return touched.data?.person_id ? String(touched.data.person_id) : null;
+    }
 
     const legacy = await this.db
       .from("matrix_identities")
@@ -374,74 +391,16 @@ export class SupabaseMatrixRepository implements MatrixRepository {
   }
 
   async consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult> {
-    const now = new Date().toISOString();
-    const bridge = await this.db
-      .from("matrix_identity_bridge_tokens")
-      .select("id,person_id,external_system,external_ref_hash,expires_at")
-      .eq("project_id", project.projectId)
-      .eq("bridge_code_hash", sha256(bridgeCode))
-      .eq("status", "pending")
-      .gt("expires_at", now)
-      .maybeSingle();
-    if (bridge.error) throw new Error("identity bridge lookup failed");
-    if (!bridge.data?.id || !bridge.data.person_id) throw new Error("identity bridge is invalid or expired");
-
-    const personId = String(bridge.data.person_id);
-    const anonymousProfileId = await this.upsertAnonymous(project, anonymousId);
-
-    const linked = await this.db.from("matrix_identity_links").upsert({
-      tenant_id: project.tenantId,
-      project_id: project.projectId,
-      anonymous_profile_id: anonymousProfileId,
-      person_id: personId,
-      link_reason: "explicit_attual_one_bridge",
-      confidence: 1,
-      link_status: "active",
-      external_system: "attual_one",
-      external_ref_hash: bridge.data.external_ref_hash,
-      verified_at: now,
-      revoked_at: null,
-      metadata: { explicit_user_action: true, hidden_stitching: false, correlation_id: correlationId },
-    }, { onConflict: "anonymous_profile_id,person_id" });
-    if (linked.error) throw new Error("explicit identity link could not be persisted");
-
-    await this.persistConsent(project, personId, consent, correlationId);
-
+    if (!consent.analytics || !consent.adult_confirmed) throw new Error("explicit adult analytics consent is required");
     const personToken = randomOpaque("mps_", 32);
-    const expiresAt = new Date(Date.now() + PERSON_SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const session = await this.db.from("matrix_person_sessions").insert({
-      tenant_id: project.tenantId,
-      project_id: project.projectId,
-      person_id: personId,
-      anonymous_profile_id: anonymousProfileId,
-      bridge_id: bridge.data.id,
-      token_hash: sha256(personToken),
-      status: "active",
-      issued_at: now,
-      expires_at: expiresAt,
-      last_seen_at: now,
-      correlation_id: correlationId,
+    const result = await this.db.rpc("matrix_m4_consume_bridge", {
+      p_tenant_id: project.tenantId, p_project_id: project.projectId,
+      p_bridge_hash: sha256(bridgeCode), p_anonymous_hash: sha256(anonymousId),
+      p_session_hash: sha256(personToken), p_consent: consent, p_correlation_id: correlationId,
     });
-    if (session.error) throw new Error("person session could not be created");
-
-    const consumed = await this.db
-      .from("matrix_identity_bridge_tokens")
-      .update({ status: "consumed", consumed_at: now })
-      .eq("id", bridge.data.id)
-      .eq("status", "pending");
-    if (consumed.error) throw new Error("identity bridge could not be consumed");
-
-    await this.audit("m4.identity.linked", "matrix_identity_link", "attualplay", correlationId, {
-      project_id: project.projectId,
-      person_id: personId,
-      anonymous_profile_id: anonymousProfileId,
-      external_system: "attual_one",
-      explicit_user_action: true,
-      hidden_stitching: false,
-      session_expires_at: expiresAt,
-    });
-
-    return { matrix_person_id: personId, person_token: personToken, expires_at: expiresAt };
+    if (result.error) throw new Error("identity bridge could not be committed");
+    if (!result.data?.matrix_person_id || !result.data?.expires_at) throw new Error("identity bridge is invalid or expired");
+    return { matrix_person_id: result.data.matrix_person_id, person_token: personToken, expires_at: result.data.expires_at };
   }
 
   async syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null> {
@@ -459,45 +418,61 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     return result;
   }
 
-  async unlinkPerson(project: ProjectRef, personToken: string, correlationId: string): Promise<{ matrix_person_id: string } | null> {
-    const personId = await this.resolvePersonToken(project, personToken);
-    if (!personId) return null;
-    const now = new Date().toISOString();
-
-    const sessions = await this.db
-      .from("matrix_person_sessions")
-      .update({ status: "revoked", revoked_at: now })
-      .eq("tenant_id", project.tenantId)
-      .eq("project_id", project.projectId)
-      .eq("person_id", personId)
-      .eq("status", "active");
-    if (sessions.error) throw new Error("person sessions could not be revoked");
-
-    const links = await this.db
-      .from("matrix_identity_links")
-      .update({ link_status: "revoked", revoked_at: now })
-      .eq("tenant_id", project.tenantId)
-      .eq("project_id", project.projectId)
-      .eq("person_id", personId)
-      .eq("external_system", "attual_one")
-      .eq("link_status", "active");
-    if (links.error) throw new Error("identity link could not be revoked");
-
-    const withdrawn: M4ConsentChoice = {
-      analytics: false,
-      personalization: false,
-      adult_confirmed: false,
-      marketing: false,
-      policy_version: "attualplay-privacy-v4-2026-09-07",
-    };
-    await this.persistConsent(project, personId, withdrawn, correlationId);
-    await this.audit("m4.identity.unlinked", "matrix_identity_link", "attualplay", correlationId, {
-      project_id: project.projectId,
-      person_id: personId,
-      external_system: "attual_one",
-      marketing: false,
+  async unlinkPerson(project: ProjectRef, personToken: string): Promise<RevocationReceipt | null> {
+    const receipt = await this.db.rpc("matrix_m4_begin_revocation", {
+      p_tenant_id: project.tenantId,
+      p_project_id: project.projectId,
+      p_token_hash: sha256(personToken),
     });
-    return { matrix_person_id: personId };
+    if (receipt.error) throw new Error("M4 revocation could not be persisted");
+    if (receipt.data === null) return null;
+    const { matrix_person_id, operation_id, confirmed } = receipt.data;
+    if (typeof matrix_person_id !== "string" || typeof operation_id !== "string" || typeof confirmed !== "boolean") {
+      throw new Error("Invalid M4 revocation receipt");
+    }
+    return { matrix_person_id, operation_id, confirmed };
+  }
+
+  async confirmRevocation(project: PendingRevocation["project"], operationId: string): Promise<void> {
+    const query = () => this.db.from("matrix_m4_revocation_receipts");
+    const saved = await query().update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+      .eq("tenant_id", project.tenantId).eq("project_id", project.projectId).eq("operation_id", operationId)
+      .eq("status", "pending").select("operation_id").maybeSingle();
+    if (saved.error) throw new Error("M4 revocation confirmation could not be persisted");
+    if (saved.data?.operation_id === operationId) return;
+    const existing = await query().select("operation_id")
+      .eq("tenant_id", project.tenantId).eq("project_id", project.projectId).eq("operation_id", operationId)
+      .eq("status", "confirmed").maybeSingle();
+    if (existing.error || existing.data?.operation_id !== operationId) {
+      throw new Error("M4 revocation confirmation is not durable");
+    }
+  }
+
+  async claimPendingRevocations(limit: number): Promise<PendingRevocation[]> {
+    const now = Date.now();
+    const eligible = await this.db.from("matrix_m4_revocation_receipts")
+      .select("operation_id,retry_attempts")
+      .eq("status", "pending").lte("next_attempt_at", new Date(now).toISOString())
+      .order("next_attempt_at", { ascending: true }).order("operation_id", { ascending: true })
+      .limit(Math.min(4, Math.max(1, Math.trunc(limit))));
+    if (eligible.error) throw new Error("M4 revocation work lookup failed");
+    const claimed: PendingRevocation[] = [];
+    for (const candidate of eligible.data ?? []) {
+      // A bounded per-operation lease is acquired before sending. A crash leaves it recoverable.
+      const attempts = Number(candidate.retry_attempts ?? 0) + 1;
+      const waitMs = Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts - 1, 6));
+      const lease = await this.db.from("matrix_m4_revocation_receipts")
+        .update({ retry_attempts: attempts, next_attempt_at: new Date(now + waitMs).toISOString() })
+        .eq("operation_id", candidate.operation_id).eq("status", "pending")
+        .eq("retry_attempts", candidate.retry_attempts).lte("next_attempt_at", new Date(now).toISOString())
+        .select("operation_id,tenant_id,project_id,person_id").maybeSingle();
+      if (lease.error) throw new Error("M4 revocation work could not be claimed");
+      if (lease.data) claimed.push({
+        project: { tenantId: lease.data.tenant_id, projectId: lease.data.project_id },
+        matrix_person_id: lease.data.person_id, operation_id: lease.data.operation_id,
+      });
+    }
+    return claimed;
   }
 
   async insertEvent(row: EventRow): Promise<InsertResult> {
@@ -611,14 +586,58 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     }));
   }
 
-  async markSignalDelivered(id: string): Promise<void> {
+  async getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible"> {
+    const now = new Date().toISOString();
+    const item = await this.db.from("matrix_m3_action_outbox")
+      .select("tenant_id,project_id,decision_id,person_id,idempotency_key,payload")
+      .eq("id", id).eq("destination", "attual_one").eq("action_type", "qualified_interest_signal")
+      .in("status", ["pending", "failed"]).lte("available_at", now).gt("expires_at", now).maybeSingle();
+    if (item.error) throw new Error("M4 outbox eligibility read failed");
+    if (!item.data) return "stale";
+
+    const { tenant_id, project_id, decision_id, person_id, idempotency_key, payload } = item.data;
+    if (payload?.matrix_person_id !== person_id || payload?.signal_key !== idempotency_key
+      || typeof payload?.policy_version !== "string" || payload?.purpose !== "personalization"
+      || payload?.marketing_allowed !== false
+      || payload?.external_action_allowed !== false) return "ineligible";
+
+    const [decision, policy, link, analytics, personalization] = await Promise.all([
+      this.db.from("matrix_m3_decisions").select("id")
+        .eq("id", decision_id).eq("tenant_id", tenant_id).eq("project_id", project_id)
+        .eq("person_id", person_id).eq("policy_version", payload.policy_version)
+        .eq("decision_status", "eligible").gt("expires_at", now).maybeSingle(),
+      this.db.from("matrix_m3_policies").select("id")
+        .eq("tenant_id", tenant_id).eq("project_id", project_id).eq("policy_version", payload.policy_version)
+        .eq("status", "active").eq("personalization_requires_opt_in", true)
+        .eq("downstream_requires_identified_person", true)
+        .eq("marketing_enabled", false).eq("n8n_external_actions_enabled", false).maybeSingle(),
+      this.db.from("matrix_identity_links").select("id")
+        .eq("tenant_id", tenant_id).eq("project_id", project_id).eq("person_id", person_id)
+        .eq("external_system", "attual_one").eq("link_status", "active").limit(1).maybeSingle(),
+      this.hasCurrentPersonConsent(String(person_id), "analytics"),
+      this.hasCurrentPersonConsent(String(person_id), "personalization"),
+    ]);
+    if (decision.error || policy.error || link.error) throw new Error("M4 dispatch governance read failed");
+    return decision.data && policy.data && link.data && analytics && personalization ? "allowed" : "ineligible";
+  }
+
+  async markSignalSuppressed(id: string, reason: string): Promise<boolean> {
+    const result = await this.db.from("matrix_m3_action_outbox").update({
+      status: "suppressed", last_error: reason, updated_at: new Date().toISOString(),
+    }).eq("id", id).in("status", ["pending", "failed"]).select("id").maybeSingle();
+    if (result.error) throw new Error("M4 outbox suppression acknowledgement failed");
+    return Boolean(result.data?.id);
+  }
+
+  async markSignalDelivered(id: string): Promise<boolean> {
     const result = await this.db.from("matrix_m3_action_outbox").update({
       status: "delivered",
       delivered_at: new Date().toISOString(),
       last_error: null,
       updated_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).eq("id", id).in("status", ["pending", "failed"]).select("id").maybeSingle();
     if (result.error) throw new Error("M4 outbox delivery acknowledgement failed");
+    return Boolean(result.data?.id);
   }
 
   async markSignalFailed(id: string, safeError: string): Promise<void> {
@@ -632,7 +651,7 @@ export class SupabaseMatrixRepository implements MatrixRepository {
       last_error: safeError.slice(0, 240),
       available_at: new Date(Date.now() + delayMinutes * 60 * 1000).toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).eq("id", id).in("status", ["pending", "failed"]);
     if (result.error) throw new Error("M4 outbox failure acknowledgement failed");
   }
 

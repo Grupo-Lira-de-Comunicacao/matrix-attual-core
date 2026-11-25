@@ -8,6 +8,7 @@ import type {
   PersonalizedRecommendation,
   M4ConsentChoice,
   PendingSignal,
+  PendingRevocation,
 } from "../db.js";
 import type { RuntimeConfig } from "../config.js";
 
@@ -62,10 +63,14 @@ class FakeRepository implements MatrixRepository {
     };
   }
   async unlinkPerson() {
-    return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444" } : null;
+    return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444", operation_id: "abababab-abab-4bab-8bab-abababababab", confirmed: false } : null;
   }
+  async confirmRevocation(_project: PendingRevocation["project"], _operationId: string) {}
+  async claimPendingRevocations(_limit: number): Promise<PendingRevocation[]> { return []; }
   async listPendingAttualOneSignals(): Promise<PendingSignal[]> { return []; }
-  async markSignalDelivered() {}
+  async getSignalDispatchGate(_id: string): Promise<"allowed" | "stale" | "ineligible"> { return "allowed"; }
+  async markSignalSuppressed(_id: string, _reason: string) { return true; }
+  async markSignalDelivered(_id: string) { return true; }
   async markSignalFailed() {}
   async m4Observability() { return { active_identity_links: 1, n8n_executable_rows: 0, marketing_enabled: false }; }
 }
@@ -180,7 +185,7 @@ describe("Matrix Event API", () => {
   });
 
   it("links identity only through an explicit one-time bridge and keeps marketing false", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ accepted: true, matrix_person_id: "44444444-4444-4444-8444-444444444444", link_status: "linked", marketing_enabled: false, external_action_enabled: false }));
     const app = createApp({ config, repository: new FakeRepository() });
     const response = await app.request("/v1/identity/link", {
       method: "POST",
@@ -197,6 +202,24 @@ describe("Matrix Event API", () => {
     expect(body.identity.person_token).toMatch(/^mps_/);
     expect(body.consent.marketing).toBe(false);
     expect(body.attual_one_link_status).toBe("linked");
+  });
+
+  it("rejects a bridge link without explicit adult analytics consent before repository mutation", async () => {
+    const repository = new FakeRepository();
+    const consume = vi.spyOn(repository, "consumeIdentityBridge");
+    const app = createApp({ config, repository });
+    const response = await app.request("/v1/identity/link", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        project_key: "attualplay",
+        anonymous_id: "anon-123456",
+        bridge_code: "M4-ABCDEF1234567890",
+        consent: { ...recommendationQuery.consent, analytics: false, personalization: false, adult_confirmed: false },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(consume).not.toHaveBeenCalled();
   });
 
   it("syncs identified consent and rejects marketing authorization", async () => {
@@ -244,5 +267,114 @@ describe("Matrix Event API", () => {
       body: JSON.stringify(event),
     });
     expect(response.status).toBe(403);
+  });
+});
+
+
+describe("M4 downstream receipts at the API boundary", () => {
+  it("keeps local revocation pending when One has not confirmed its effects", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ accepted: true }));
+    const app = createApp({ config, repository: new FakeRepository() });
+    const response = await app.request("/v1/identity/unlink", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ project_key: "attualplay", person_token: "mps_test_person_session_1234567890" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ unlinked: true, attual_one_link_status: "revoked_callback_pending" });
+  });
+
+  it("reconciles the same operation after an ambiguous callback and reuses a confirmed receipt", async () => {
+    const repo = new FakeRepository();
+    const original = (await repo.unlinkPerson())!;
+    vi.spyOn(repo, "unlinkPerson").mockResolvedValueOnce(original).mockResolvedValueOnce(original)
+      .mockResolvedValueOnce({ ...original, confirmed: true });
+    const persist = vi.spyOn(repo, "confirmRevocation");
+    const fetcher = vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("fixture response lost"))
+      .mockResolvedValueOnce(Response.json({ accepted: true, matrix_person_id: original.matrix_person_id,
+        link_status: "revoked", marketing_enabled: false, external_action_enabled: false }));
+    const app = createApp({ config, repository: repo });
+    const send = async () => (await app.request("/v1/identity/unlink", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ project_key: "attualplay", person_token: "mps_test_person_session_1234567890" }),
+    })).json();
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked_callback_pending" });
+    expect(persist).not.toHaveBeenCalled();
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked" });
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, request] of fetcher.mock.calls) {
+      expect(JSON.parse(String(request?.body)).correlation_id).toBe(original.operation_id);
+    }
+    expect(persist).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectKey: "attualplay" }), original.operation_id);
+  });
+
+  it("retries only through the internal runner and keeps a missing receipt pending", async () => {
+    const repo = new FakeRepository();
+    const original = (await repo.unlinkPerson())!;
+    const project = { tenantId: "fixture-tenant", projectId: "fixture-project" };
+    const claim = vi.spyOn(repo, "claimPendingRevocations").mockResolvedValue([{...original, project}]);
+    const persist = vi.spyOn(repo, "confirmRevocation");
+    const fetcher = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("One temporarily unavailable"))
+      .mockResolvedValueOnce(Response.json({ accepted: true, matrix_person_id: original.matrix_person_id,
+        link_status: "revoked", marketing_enabled: false, external_action_enabled: false }));
+    const app = createApp({ config, repository: repo });
+    const path = "/v1/internal/m4/reconcile-revocations";
+    expect((await app.request(path, {method: "POST"})).status).toBe(401);
+    expect(claim).not.toHaveBeenCalled();
+    const run = async () => (await app.request(path, {method: "POST",
+      headers: { authorization: `Bearer ${config.m4InternalKey}` }})).json();
+    expect(await run()).toMatchObject({ claimed: 1, confirmed: 0, pending: 1 });
+    expect(persist).not.toHaveBeenCalled();
+    expect(await run()).toMatchObject({ claimed: 1, confirmed: 1, pending: 0, marketing_enabled: false, external_actions_enabled: false });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenCalledExactlyOnceWith(project, original.operation_id);
+  });
+
+  it("records only the matching active receipt as a delivered signal", async () => {
+    const repo = new FakeRepository();
+    vi.spyOn(repo, "listPendingAttualOneSignals").mockResolvedValue([
+      { id: "fixture-1", idempotency_key: "fixture-signal-1", payload: {}, attempts: 0 },
+      { id: "fixture-2", idempotency_key: "fixture-signal-2", payload: {}, attempts: 0 },
+      { id: "fixture-3", idempotency_key: "fixture-signal-3", payload: {}, attempts: 0 },
+    ]);
+    const delivered = vi.spyOn(repo, "markSignalDelivered");
+    const failed = vi.spyOn(repo, "markSignalFailed");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ accepted: true, duplicate: true, signal_key: "fixture-signal-1", processing_status: "linked" }))
+      .mockResolvedValueOnce(new Response(null, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ accepted: true, duplicate: false, signal_key: "fixture-signal-3", processing_status: "suppressed" }));
+    const app = createApp({ config, repository: repo });
+    const response = await app.request("/v1/internal/m4/dispatch", {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.m4InternalKey}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ delivered: 1, failed: 2, marketing_enabled: false, n8n_external_actions_enabled: false });
+    expect(delivered).toHaveBeenCalledExactlyOnceWith("fixture-1");
+    expect(failed).toHaveBeenCalledWith("fixture-2", "attual_one_http_409");
+    expect(failed).toHaveBeenCalledWith("fixture-3", "attual_one_unconfirmed_receipt");
+  });
+
+  it("suppresses ineligible rows and never sends when governance cannot be verified", async () => {
+    const repo = new FakeRepository();
+    vi.spyOn(repo, "listPendingAttualOneSignals").mockResolvedValue([
+      { id: "fixture-withdrawn", idempotency_key: "fixture-withdrawn", payload: {}, attempts: 0 },
+      { id: "fixture-unavailable", idempotency_key: "fixture-unavailable", payload: {}, attempts: 0 },
+    ]);
+    vi.spyOn(repo, "getSignalDispatchGate").mockResolvedValueOnce("ineligible").mockRejectedValueOnce(new Error("fixture db unavailable"));
+    const suppressed = vi.spyOn(repo, "markSignalSuppressed");
+    const failed = vi.spyOn(repo, "markSignalFailed");
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    const app = createApp({ config, repository: repo });
+    const response = await app.request("/v1/internal/m4/dispatch", {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.m4InternalKey}` },
+    });
+    expect(await response.json()).toMatchObject({ delivered: 0, failed: 1, suppressed: 1 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(suppressed).toHaveBeenCalledWith("fixture-withdrawn", "m4_dispatch_governance_ineligible");
+    expect(failed).toHaveBeenCalledWith("fixture-unavailable", "m4_dispatch_governance_unavailable");
   });
 });

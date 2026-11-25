@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeConfig } from "./config.js";
 import type { MatrixRepository } from "./db.js";
+import { hasLinkReceipt, hasSignalReceipt } from "./m4-receipts.js";
 
 export const m4ConsentSchema = z.object({
   analytics: z.boolean(),
@@ -29,7 +30,11 @@ export const identityLinkSchema = z.object({
   anonymous_id: z.string().min(3).max(200),
   bridge_code: z.string().min(12).max(120),
   consent: m4ConsentSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (!value.consent.analytics || !value.consent.adult_confirmed) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["consent"], message: "explicit adult analytics consent is required for identity linking" });
+  }
+});
 
 export const consentSyncSchema = z.object({
   project_key: z.string().min(2).max(100),
@@ -75,22 +80,52 @@ export async function notifyAttualOneLink(
       }),
       signal: AbortSignal.timeout(8000),
     });
-    return response.ok;
+    return await hasLinkReceipt(response, matrixPersonId, linkStatus);
   } catch {
     return false;
   }
+}
+
+export async function retryPendingRevocations(repository: MatrixRepository, config: RuntimeConfig) {
+  const work = await repository.claimPendingRevocations(4);
+  const results = await Promise.all(work.map(async (item) => {
+    try {
+      if (!await notifyAttualOneLink(config, item.matrix_person_id, "revoked", item.operation_id)) return false;
+      await repository.confirmRevocation(item.project, item.operation_id);
+      return true;
+    } catch {
+      // Do not discard the durable work entry. The lease enables the next retry.
+      return false;
+    }
+  }));
+  const confirmed = results.filter(Boolean).length;
+  return { claimed: work.length, confirmed, pending: work.length - confirmed };
 }
 
 export async function dispatchAttualOneSignals(
   repository: MatrixRepository,
   config: RuntimeConfig,
   limit = 20,
-): Promise<{ delivered: number; failed: number }> {
+): Promise<{ delivered: number; failed: number; suppressed: number }> {
   const pending = await repository.listPendingAttualOneSignals(limit);
   let delivered = 0;
   let failed = 0;
+  let suppressed = 0;
 
   for (const row of pending) {
+    let gate: "allowed" | "stale" | "ineligible";
+    try {
+      gate = await repository.getSignalDispatchGate(row.id);
+    } catch {
+      await repository.markSignalFailed(row.id, "m4_dispatch_governance_unavailable");
+      failed += 1;
+      continue;
+    }
+    if (gate === "stale") continue;
+    if (gate === "ineligible") {
+      if (await repository.markSignalSuppressed(row.id, "m4_dispatch_governance_ineligible")) suppressed += 1;
+      continue;
+    }
     try {
       const response = await fetch(config.attualOneSignalUrl, {
         method: "POST",
@@ -102,11 +137,10 @@ export async function dispatchAttualOneSignals(
         body: JSON.stringify(row.payload),
         signal: AbortSignal.timeout(8000),
       });
-      if (response.ok || response.status === 409) {
-        await repository.markSignalDelivered(row.id);
-        delivered += 1;
+      if (await hasSignalReceipt(response, row.idempotency_key)) {
+        if (await repository.markSignalDelivered(row.id)) delivered += 1;
       } else {
-        await repository.markSignalFailed(row.id, `attual_one_http_${response.status}`);
+        await repository.markSignalFailed(row.id, response.ok ? "attual_one_unconfirmed_receipt" : `attual_one_http_${response.status}`);
         failed += 1;
       }
     } catch {
@@ -115,5 +149,5 @@ export async function dispatchAttualOneSignals(
     }
   }
 
-  return { delivered, failed };
+  return { delivered, failed, suppressed };
 }
