@@ -118,7 +118,6 @@ export interface MatrixRepository {
 }
 
 const ANONYMOUS_RETENTION_DAYS = 90;
-const PERSON_SESSION_DAYS = 30;
 const BRIDGE_TTL_MINUTES = 10;
 
 function sha256(value: string): string {
@@ -392,72 +391,16 @@ export class SupabaseMatrixRepository implements MatrixRepository {
   }
 
   async consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult> {
-    const now = new Date().toISOString();
     if (!consent.analytics || !consent.adult_confirmed) throw new Error("explicit adult analytics consent is required");
-    // Claim the code before any identity, consent or session side effects.
-    // A conditional UPDATE returning zero rows loses the race and cannot create a session.
-    const bridge = await this.db
-      .from("matrix_identity_bridge_tokens")
-      .update({ status: "consumed", consumed_at: now })
-      .eq("tenant_id", project.tenantId)
-      .eq("project_id", project.projectId)
-      .eq("bridge_code_hash", sha256(bridgeCode))
-      .eq("status", "pending")
-      .gt("expires_at", now)
-      .select("id,person_id,external_system,external_ref_hash,expires_at")
-      .maybeSingle();
-    if (bridge.error) throw new Error("identity bridge lookup failed");
-    if (!bridge.data?.id || !bridge.data.person_id) throw new Error("identity bridge is invalid or expired");
-
-    const personId = String(bridge.data.person_id);
-    const anonymousProfileId = await this.upsertAnonymous(project, anonymousId);
-
-    const linked = await this.db.from("matrix_identity_links").upsert({
-      tenant_id: project.tenantId,
-      project_id: project.projectId,
-      anonymous_profile_id: anonymousProfileId,
-      person_id: personId,
-      link_reason: "explicit_attual_one_bridge",
-      confidence: 1,
-      link_status: "active",
-      external_system: "attual_one",
-      external_ref_hash: bridge.data.external_ref_hash,
-      verified_at: now,
-      revoked_at: null,
-      metadata: { explicit_user_action: true, hidden_stitching: false, correlation_id: correlationId },
-    }, { onConflict: "anonymous_profile_id,person_id" });
-    if (linked.error) throw new Error("explicit identity link could not be persisted");
-
-    await this.persistConsent(project, personId, consent, correlationId);
-
     const personToken = randomOpaque("mps_", 32);
-    const expiresAt = new Date(Date.now() + PERSON_SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const session = await this.db.from("matrix_person_sessions").insert({
-      tenant_id: project.tenantId,
-      project_id: project.projectId,
-      person_id: personId,
-      anonymous_profile_id: anonymousProfileId,
-      bridge_id: bridge.data.id,
-      token_hash: sha256(personToken),
-      status: "active",
-      issued_at: now,
-      expires_at: expiresAt,
-      last_seen_at: now,
-      correlation_id: correlationId,
+    const result = await this.db.rpc("matrix_m4_consume_bridge", {
+      p_tenant_id: project.tenantId, p_project_id: project.projectId,
+      p_bridge_hash: sha256(bridgeCode), p_anonymous_hash: sha256(anonymousId),
+      p_session_hash: sha256(personToken), p_consent: consent, p_correlation_id: correlationId,
     });
-    if (session.error) throw new Error("person session could not be created");
-
-    await this.audit("m4.identity.linked", "matrix_identity_link", "attualplay", correlationId, {
-      project_id: project.projectId,
-      person_id: personId,
-      anonymous_profile_id: anonymousProfileId,
-      external_system: "attual_one",
-      explicit_user_action: true,
-      hidden_stitching: false,
-      session_expires_at: expiresAt,
-    });
-
-    return { matrix_person_id: personId, person_token: personToken, expires_at: expiresAt };
+    if (result.error) throw new Error("identity bridge could not be committed");
+    if (!result.data?.matrix_person_id || !result.data?.expires_at) throw new Error("identity bridge is invalid or expired");
+    return { matrix_person_id: result.data.matrix_person_id, person_token: personToken, expires_at: result.data.expires_at };
   }
 
   async syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null> {
