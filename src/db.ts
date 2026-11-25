@@ -375,13 +375,18 @@ export class SupabaseMatrixRepository implements MatrixRepository {
 
   async consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult> {
     const now = new Date().toISOString();
+    if (!consent.analytics || !consent.adult_confirmed) throw new Error("explicit adult analytics consent is required");
+    // Claim the code before any identity, consent or session side effects.
+    // A conditional UPDATE returning zero rows loses the race and cannot create a session.
     const bridge = await this.db
       .from("matrix_identity_bridge_tokens")
-      .select("id,person_id,external_system,external_ref_hash,expires_at")
+      .update({ status: "consumed", consumed_at: now })
+      .eq("tenant_id", project.tenantId)
       .eq("project_id", project.projectId)
       .eq("bridge_code_hash", sha256(bridgeCode))
       .eq("status", "pending")
       .gt("expires_at", now)
+      .select("id,person_id,external_system,external_ref_hash,expires_at")
       .maybeSingle();
     if (bridge.error) throw new Error("identity bridge lookup failed");
     if (!bridge.data?.id || !bridge.data.person_id) throw new Error("identity bridge is invalid or expired");
@@ -423,13 +428,6 @@ export class SupabaseMatrixRepository implements MatrixRepository {
       correlation_id: correlationId,
     });
     if (session.error) throw new Error("person session could not be created");
-
-    const consumed = await this.db
-      .from("matrix_identity_bridge_tokens")
-      .update({ status: "consumed", consumed_at: now })
-      .eq("id", bridge.data.id)
-      .eq("status", "pending");
-    if (consumed.error) throw new Error("identity bridge could not be consumed");
 
     await this.audit("m4.identity.linked", "matrix_identity_link", "attualplay", correlationId, {
       project_id: project.projectId,
