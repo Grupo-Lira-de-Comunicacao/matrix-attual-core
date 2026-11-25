@@ -199,6 +199,24 @@ describe("Matrix Event API", () => {
     expect(body.attual_one_link_status).toBe("linked");
   });
 
+  it("rejects a bridge link without explicit adult analytics consent before repository mutation", async () => {
+    const repository = new FakeRepository();
+    const consume = vi.spyOn(repository, "consumeIdentityBridge");
+    const app = createApp({ config, repository });
+    const response = await app.request("/v1/identity/link", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        project_key: "attualplay",
+        anonymous_id: "anon-123456",
+        bridge_code: "M4-ABCDEF1234567890",
+        consent: { ...recommendationQuery.consent, analytics: false, personalization: false, adult_confirmed: false },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(consume).not.toHaveBeenCalled();
+  });
+
   it("syncs identified consent and rejects marketing authorization", async () => {
     const app = createApp({ config, repository: new FakeRepository() });
     const response = await app.request("/v1/consents", {
