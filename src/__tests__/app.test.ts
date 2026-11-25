@@ -62,8 +62,9 @@ class FakeRepository implements MatrixRepository {
     };
   }
   async unlinkPerson() {
-    return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444" } : null;
+    return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444", operation_id: "abababab-abab-4bab-8bab-abababababab", confirmed: false } : null;
   }
+  async confirmRevocation(_project: ProjectRef, _operationId: string) {}
   async listPendingAttualOneSignals(): Promise<PendingSignal[]> { return []; }
   async getSignalDispatchGate(_id: string): Promise<"allowed" | "stale" | "ineligible"> { return "allowed"; }
   async markSignalSuppressed(_id: string, _reason: string) { return true; }
@@ -279,6 +280,32 @@ describe("M4 downstream receipts at the API boundary", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ unlinked: true, attual_one_link_status: "revoked_callback_pending" });
+  });
+
+  it("reconciles the same operation after an ambiguous callback and reuses a confirmed receipt", async () => {
+    const repo = new FakeRepository();
+    const original = (await repo.unlinkPerson())!;
+    vi.spyOn(repo, "unlinkPerson").mockResolvedValueOnce(original).mockResolvedValueOnce(original)
+      .mockResolvedValueOnce({ ...original, confirmed: true });
+    const persist = vi.spyOn(repo, "confirmRevocation");
+    const fetcher = vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("fixture response lost"))
+      .mockResolvedValueOnce(Response.json({ accepted: true, matrix_person_id: original.matrix_person_id,
+        link_status: "revoked", marketing_enabled: false, external_action_enabled: false }));
+    const app = createApp({ config, repository: repo });
+    const send = async () => (await app.request("/v1/identity/unlink", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ project_key: "attualplay", person_token: "mps_test_person_session_1234567890" }),
+    })).json();
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked_callback_pending" });
+    expect(persist).not.toHaveBeenCalled();
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked" });
+    expect(await send()).toMatchObject({ revocation_operation_id: original.operation_id, attual_one_link_status: "revoked" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, request] of fetcher.mock.calls) {
+      expect(JSON.parse(String(request?.body)).correlation_id).toBe(original.operation_id);
+    }
+    expect(persist).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectKey: "attualplay" }), original.operation_id);
   });
 
   it("records only the matching active receipt as a delivered signal", async () => {

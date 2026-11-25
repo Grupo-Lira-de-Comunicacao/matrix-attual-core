@@ -82,6 +82,12 @@ export type PendingSignal = {
   attempts: number;
 };
 
+export type RevocationReceipt = {
+  matrix_person_id: string;
+  operation_id: string;
+  confirmed: boolean;
+};
+
 export interface MatrixRepository {
   resolveProject(projectKey: string): Promise<ProjectRef>;
   upsertAnonymous(project: ProjectRef, anonymousId: string): Promise<string>;
@@ -93,7 +99,8 @@ export interface MatrixRepository {
   createIdentityBridge(project: ProjectRef, externalAccountRef: string, correlationId: string): Promise<IdentityBridgeIssue>;
   consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult>;
   syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null>;
-  unlinkPerson(project: ProjectRef, personToken: string, correlationId: string): Promise<{ matrix_person_id: string } | null>;
+  unlinkPerson(project: ProjectRef, personToken: string): Promise<RevocationReceipt | null>;
+  confirmRevocation(project: ProjectRef, operationId: string): Promise<void>;
   listPendingAttualOneSignals(limit: number): Promise<PendingSignal[]>;
   getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible">;
   markSignalSuppressed(id: string, reason: string): Promise<boolean>;
@@ -199,18 +206,20 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     const now = new Date().toISOString();
     const session = await this.db
       .from("matrix_person_sessions")
-      .select("id,person_id")
+      .select("id,person_id,status,expires_at")
       .eq("tenant_id", project.tenantId)
       .eq("project_id", project.projectId)
       .eq("token_hash", sha256(personToken))
-      .eq("status", "active")
-      .gt("expires_at", now)
       .maybeSingle();
-    if (!session.error && session.data?.person_id) {
-      await this.db.from("matrix_person_sessions").update({ last_seen_at: now }).eq("id", session.data.id);
-      return String(session.data.person_id);
-    }
     if (session.error) throw new Error("person session resolution failed");
+    if (session.data) {
+      // A known revoked or expired M4 token is never a legacy bearer credential.
+      if (session.data.status !== "active" || !(Date.parse(session.data.expires_at) > Date.parse(now))) return null;
+      const touched = await this.db.from("matrix_person_sessions").update({ last_seen_at: now })
+        .eq("id", session.data.id).eq("status", "active").gt("expires_at", now).select("person_id").maybeSingle();
+      if (touched.error) throw new Error("person session revalidation failed");
+      return touched.data?.person_id ? String(touched.data.person_id) : null;
+    }
 
     const legacy = await this.db
       .from("matrix_identities")
@@ -459,45 +468,34 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     return result;
   }
 
-  async unlinkPerson(project: ProjectRef, personToken: string, correlationId: string): Promise<{ matrix_person_id: string } | null> {
-    const personId = await this.resolvePersonToken(project, personToken);
-    if (!personId) return null;
-    const now = new Date().toISOString();
-
-    const sessions = await this.db
-      .from("matrix_person_sessions")
-      .update({ status: "revoked", revoked_at: now })
-      .eq("tenant_id", project.tenantId)
-      .eq("project_id", project.projectId)
-      .eq("person_id", personId)
-      .eq("status", "active");
-    if (sessions.error) throw new Error("person sessions could not be revoked");
-
-    const links = await this.db
-      .from("matrix_identity_links")
-      .update({ link_status: "revoked", revoked_at: now })
-      .eq("tenant_id", project.tenantId)
-      .eq("project_id", project.projectId)
-      .eq("person_id", personId)
-      .eq("external_system", "attual_one")
-      .eq("link_status", "active");
-    if (links.error) throw new Error("identity link could not be revoked");
-
-    const withdrawn: M4ConsentChoice = {
-      analytics: false,
-      personalization: false,
-      adult_confirmed: false,
-      marketing: false,
-      policy_version: "attualplay-privacy-v4-2026-09-07",
-    };
-    await this.persistConsent(project, personId, withdrawn, correlationId);
-    await this.audit("m4.identity.unlinked", "matrix_identity_link", "attualplay", correlationId, {
-      project_id: project.projectId,
-      person_id: personId,
-      external_system: "attual_one",
-      marketing: false,
+  async unlinkPerson(project: ProjectRef, personToken: string): Promise<RevocationReceipt | null> {
+    const receipt = await this.db.rpc("matrix_m4_begin_revocation", {
+      p_tenant_id: project.tenantId,
+      p_project_id: project.projectId,
+      p_token_hash: sha256(personToken),
     });
-    return { matrix_person_id: personId };
+    if (receipt.error) throw new Error("M4 revocation could not be persisted");
+    if (receipt.data === null) return null;
+    const { matrix_person_id, operation_id, confirmed } = receipt.data;
+    if (typeof matrix_person_id !== "string" || typeof operation_id !== "string" || typeof confirmed !== "boolean") {
+      throw new Error("Invalid M4 revocation receipt");
+    }
+    return { matrix_person_id, operation_id, confirmed };
+  }
+
+  async confirmRevocation(project: ProjectRef, operationId: string): Promise<void> {
+    const query = () => this.db.from("matrix_m4_revocation_receipts");
+    const saved = await query().update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+      .eq("tenant_id", project.tenantId).eq("project_id", project.projectId).eq("operation_id", operationId)
+      .eq("status", "pending").select("operation_id").maybeSingle();
+    if (saved.error) throw new Error("M4 revocation confirmation could not be persisted");
+    if (saved.data?.operation_id === operationId) return;
+    const existing = await query().select("operation_id")
+      .eq("tenant_id", project.tenantId).eq("project_id", project.projectId).eq("operation_id", operationId)
+      .eq("status", "confirmed").maybeSingle();
+    if (existing.error || existing.data?.operation_id !== operationId) {
+      throw new Error("M4 revocation confirmation is not durable");
+    }
   }
 
   async insertEvent(row: EventRow): Promise<InsertResult> {

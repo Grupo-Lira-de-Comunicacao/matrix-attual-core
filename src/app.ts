@@ -172,10 +172,15 @@ export function createApp(options: AppOptions = {}) {
         return c.json({ error: { code: "project_scope_mismatch", message: "identity project does not match client scope", correlation_id: cid } }, 403);
       }
       const project = await repository.resolveProject(body.project_key);
-      const result = await repository.unlinkPerson(project, body.person_token, cid);
+      const result = await repository.unlinkPerson(project, body.person_token);
       if (!result) return c.json({ error: { code: "person_session_invalid", message: "person session is invalid or expired", correlation_id: cid } }, 401);
-      const callbackDelivered = await notifyAttualOneLink(config, result.matrix_person_id, "revoked", cid);
-      return c.json({ unlinked: true, attual_one_link_status: callbackDelivered ? "revoked" : "revoked_callback_pending", marketing: false, correlation_id: cid }, 200);
+      let confirmed = result.confirmed;
+      if (!confirmed && await notifyAttualOneLink(config, result.matrix_person_id, "revoked", result.operation_id)) {
+        await repository.confirmRevocation(project, result.operation_id);
+        confirmed = true;
+      }
+      return c.json({ unlinked: true, attual_one_link_status: confirmed ? "revoked" : "revoked_callback_pending",
+        revocation_operation_id: result.operation_id, marketing: false, correlation_id: cid }, 200);
     } catch (error) {
       if (error instanceof AuthError) {
         return c.json({ error: { code: "unauthorized", message: error.message, correlation_id: cid } }, error.status);
