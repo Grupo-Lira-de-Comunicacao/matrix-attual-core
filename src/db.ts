@@ -95,7 +95,9 @@ export interface MatrixRepository {
   syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null>;
   unlinkPerson(project: ProjectRef, personToken: string, correlationId: string): Promise<{ matrix_person_id: string } | null>;
   listPendingAttualOneSignals(limit: number): Promise<PendingSignal[]>;
-  markSignalDelivered(id: string): Promise<void>;
+  getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible">;
+  markSignalSuppressed(id: string, reason: string): Promise<boolean>;
+  markSignalDelivered(id: string): Promise<boolean>;
   markSignalFailed(id: string, safeError: string): Promise<void>;
   m4Observability(): Promise<Record<string, unknown> | null>;
   ready(): Promise<boolean>;
@@ -609,14 +611,58 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     }));
   }
 
-  async markSignalDelivered(id: string): Promise<void> {
+  async getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible"> {
+    const now = new Date().toISOString();
+    const item = await this.db.from("matrix_m3_action_outbox")
+      .select("tenant_id,project_id,decision_id,person_id,idempotency_key,payload")
+      .eq("id", id).eq("destination", "attual_one").eq("action_type", "qualified_interest_signal")
+      .in("status", ["pending", "failed"]).lte("available_at", now).gt("expires_at", now).maybeSingle();
+    if (item.error) throw new Error("M4 outbox eligibility read failed");
+    if (!item.data) return "stale";
+
+    const { tenant_id, project_id, decision_id, person_id, idempotency_key, payload } = item.data;
+    if (payload?.matrix_person_id !== person_id || payload?.signal_key !== idempotency_key
+      || typeof payload?.policy_version !== "string" || payload?.purpose !== "personalization"
+      || payload?.marketing_allowed !== false
+      || payload?.external_action_allowed !== false) return "ineligible";
+
+    const [decision, policy, link, analytics, personalization] = await Promise.all([
+      this.db.from("matrix_m3_decisions").select("id")
+        .eq("id", decision_id).eq("tenant_id", tenant_id).eq("project_id", project_id)
+        .eq("person_id", person_id).eq("policy_version", payload.policy_version)
+        .eq("decision_status", "eligible").gt("expires_at", now).maybeSingle(),
+      this.db.from("matrix_m3_policies").select("id")
+        .eq("tenant_id", tenant_id).eq("project_id", project_id).eq("policy_version", payload.policy_version)
+        .eq("status", "active").eq("personalization_requires_opt_in", true)
+        .eq("downstream_requires_identified_person", true)
+        .eq("marketing_enabled", false).eq("n8n_external_actions_enabled", false).maybeSingle(),
+      this.db.from("matrix_identity_links").select("id")
+        .eq("tenant_id", tenant_id).eq("project_id", project_id).eq("person_id", person_id)
+        .eq("external_system", "attual_one").eq("link_status", "active").limit(1).maybeSingle(),
+      this.hasCurrentPersonConsent(String(person_id), "analytics"),
+      this.hasCurrentPersonConsent(String(person_id), "personalization"),
+    ]);
+    if (decision.error || policy.error || link.error) throw new Error("M4 dispatch governance read failed");
+    return decision.data && policy.data && link.data && analytics && personalization ? "allowed" : "ineligible";
+  }
+
+  async markSignalSuppressed(id: string, reason: string): Promise<boolean> {
+    const result = await this.db.from("matrix_m3_action_outbox").update({
+      status: "suppressed", last_error: reason, updated_at: new Date().toISOString(),
+    }).eq("id", id).in("status", ["pending", "failed"]).select("id").maybeSingle();
+    if (result.error) throw new Error("M4 outbox suppression acknowledgement failed");
+    return Boolean(result.data?.id);
+  }
+
+  async markSignalDelivered(id: string): Promise<boolean> {
     const result = await this.db.from("matrix_m3_action_outbox").update({
       status: "delivered",
       delivered_at: new Date().toISOString(),
       last_error: null,
       updated_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).eq("id", id).in("status", ["pending", "failed"]).select("id").maybeSingle();
     if (result.error) throw new Error("M4 outbox delivery acknowledgement failed");
+    return Boolean(result.data?.id);
   }
 
   async markSignalFailed(id: string, safeError: string): Promise<void> {
@@ -630,7 +676,7 @@ export class SupabaseMatrixRepository implements MatrixRepository {
       last_error: safeError.slice(0, 240),
       available_at: new Date(Date.now() + delayMinutes * 60 * 1000).toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).eq("id", id).in("status", ["pending", "failed"]);
     if (result.error) throw new Error("M4 outbox failure acknowledgement failed");
   }
 

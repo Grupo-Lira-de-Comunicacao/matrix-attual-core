@@ -90,12 +90,26 @@ export async function dispatchAttualOneSignals(
   repository: MatrixRepository,
   config: RuntimeConfig,
   limit = 20,
-): Promise<{ delivered: number; failed: number }> {
+): Promise<{ delivered: number; failed: number; suppressed: number }> {
   const pending = await repository.listPendingAttualOneSignals(limit);
   let delivered = 0;
   let failed = 0;
+  let suppressed = 0;
 
   for (const row of pending) {
+    let gate: "allowed" | "stale" | "ineligible";
+    try {
+      gate = await repository.getSignalDispatchGate(row.id);
+    } catch {
+      await repository.markSignalFailed(row.id, "m4_dispatch_governance_unavailable");
+      failed += 1;
+      continue;
+    }
+    if (gate === "stale") continue;
+    if (gate === "ineligible") {
+      if (await repository.markSignalSuppressed(row.id, "m4_dispatch_governance_ineligible")) suppressed += 1;
+      continue;
+    }
     try {
       const response = await fetch(config.attualOneSignalUrl, {
         method: "POST",
@@ -108,8 +122,7 @@ export async function dispatchAttualOneSignals(
         signal: AbortSignal.timeout(8000),
       });
       if (await hasSignalReceipt(response, row.idempotency_key)) {
-        await repository.markSignalDelivered(row.id);
-        delivered += 1;
+        if (await repository.markSignalDelivered(row.id)) delivered += 1;
       } else {
         await repository.markSignalFailed(row.id, response.ok ? "attual_one_unconfirmed_receipt" : `attual_one_http_${response.status}`);
         failed += 1;
@@ -120,5 +133,5 @@ export async function dispatchAttualOneSignals(
     }
   }
 
-  return { delivered, failed };
+  return { delivered, failed, suppressed };
 }

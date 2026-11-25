@@ -65,7 +65,9 @@ class FakeRepository implements MatrixRepository {
     return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444" } : null;
   }
   async listPendingAttualOneSignals(): Promise<PendingSignal[]> { return []; }
-  async markSignalDelivered() {}
+  async getSignalDispatchGate(_id: string): Promise<"allowed" | "stale" | "ineligible"> { return "allowed"; }
+  async markSignalSuppressed(_id: string, _reason: string) { return true; }
+  async markSignalDelivered(_id: string) { return true; }
   async markSignalFailed() {}
   async m4Observability() { return { active_identity_links: 1, n8n_executable_rows: 0, marketing_enabled: false }; }
 }
@@ -302,5 +304,26 @@ describe("M4 downstream receipts at the API boundary", () => {
     expect(delivered).toHaveBeenCalledExactlyOnceWith("fixture-1");
     expect(failed).toHaveBeenCalledWith("fixture-2", "attual_one_http_409");
     expect(failed).toHaveBeenCalledWith("fixture-3", "attual_one_unconfirmed_receipt");
+  });
+
+  it("suppresses ineligible rows and never sends when governance cannot be verified", async () => {
+    const repo = new FakeRepository();
+    vi.spyOn(repo, "listPendingAttualOneSignals").mockResolvedValue([
+      { id: "fixture-withdrawn", idempotency_key: "fixture-withdrawn", payload: {}, attempts: 0 },
+      { id: "fixture-unavailable", idempotency_key: "fixture-unavailable", payload: {}, attempts: 0 },
+    ]);
+    vi.spyOn(repo, "getSignalDispatchGate").mockResolvedValueOnce("ineligible").mockRejectedValueOnce(new Error("fixture db unavailable"));
+    const suppressed = vi.spyOn(repo, "markSignalSuppressed");
+    const failed = vi.spyOn(repo, "markSignalFailed");
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    const app = createApp({ config, repository: repo });
+    const response = await app.request("/v1/internal/m4/dispatch", {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.m4InternalKey}` },
+    });
+    expect(await response.json()).toMatchObject({ delivered: 0, failed: 1, suppressed: 1 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(suppressed).toHaveBeenCalledWith("fixture-withdrawn", "m4_dispatch_governance_ineligible");
+    expect(failed).toHaveBeenCalledWith("fixture-unavailable", "m4_dispatch_governance_unavailable");
   });
 });
