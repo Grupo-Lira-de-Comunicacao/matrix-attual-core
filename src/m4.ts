@@ -29,7 +29,11 @@ export const identityLinkSchema = z.object({
   anonymous_id: z.string().min(3).max(200),
   bridge_code: z.string().min(12).max(120),
   consent: m4ConsentSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (!value.consent.analytics || !value.consent.adult_confirmed) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["consent"], message: "explicit adult analytics consent is required for identity linking" });
+  }
+});
 
 export const consentSyncSchema = z.object({
   project_key: z.string().min(2).max(100),
