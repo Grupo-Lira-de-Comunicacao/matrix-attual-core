@@ -88,6 +88,12 @@ export type RevocationReceipt = {
   confirmed: boolean;
 };
 
+export type PendingRevocation = {
+  project: Pick<ProjectRef, "tenantId" | "projectId">;
+  matrix_person_id: string;
+  operation_id: string;
+};
+
 export interface MatrixRepository {
   resolveProject(projectKey: string): Promise<ProjectRef>;
   upsertAnonymous(project: ProjectRef, anonymousId: string): Promise<string>;
@@ -100,7 +106,8 @@ export interface MatrixRepository {
   consumeIdentityBridge(project: ProjectRef, anonymousId: string, bridgeCode: string, consent: M4ConsentChoice, correlationId: string): Promise<IdentityLinkResult>;
   syncPersonConsent(project: ProjectRef, personToken: string, consent: M4ConsentChoice, correlationId: string): Promise<PersonConsentResult | null>;
   unlinkPerson(project: ProjectRef, personToken: string): Promise<RevocationReceipt | null>;
-  confirmRevocation(project: ProjectRef, operationId: string): Promise<void>;
+  confirmRevocation(project: PendingRevocation["project"], operationId: string): Promise<void>;
+  claimPendingRevocations(limit: number): Promise<PendingRevocation[]>;
   listPendingAttualOneSignals(limit: number): Promise<PendingSignal[]>;
   getSignalDispatchGate(id: string): Promise<"allowed" | "stale" | "ineligible">;
   markSignalSuppressed(id: string, reason: string): Promise<boolean>;
@@ -483,7 +490,7 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     return { matrix_person_id, operation_id, confirmed };
   }
 
-  async confirmRevocation(project: ProjectRef, operationId: string): Promise<void> {
+  async confirmRevocation(project: PendingRevocation["project"], operationId: string): Promise<void> {
     const query = () => this.db.from("matrix_m4_revocation_receipts");
     const saved = await query().update({ status: "confirmed", confirmed_at: new Date().toISOString() })
       .eq("tenant_id", project.tenantId).eq("project_id", project.projectId).eq("operation_id", operationId)
@@ -496,6 +503,33 @@ export class SupabaseMatrixRepository implements MatrixRepository {
     if (existing.error || existing.data?.operation_id !== operationId) {
       throw new Error("M4 revocation confirmation is not durable");
     }
+  }
+
+  async claimPendingRevocations(limit: number): Promise<PendingRevocation[]> {
+    const now = Date.now();
+    const eligible = await this.db.from("matrix_m4_revocation_receipts")
+      .select("operation_id,retry_attempts")
+      .eq("status", "pending").lte("next_attempt_at", new Date(now).toISOString())
+      .order("next_attempt_at", { ascending: true }).order("operation_id", { ascending: true })
+      .limit(Math.min(4, Math.max(1, Math.trunc(limit))));
+    if (eligible.error) throw new Error("M4 revocation work lookup failed");
+    const claimed: PendingRevocation[] = [];
+    for (const candidate of eligible.data ?? []) {
+      // A bounded per-operation lease is acquired before sending. A crash leaves it recoverable.
+      const attempts = Number(candidate.retry_attempts ?? 0) + 1;
+      const waitMs = Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts - 1, 6));
+      const lease = await this.db.from("matrix_m4_revocation_receipts")
+        .update({ retry_attempts: attempts, next_attempt_at: new Date(now + waitMs).toISOString() })
+        .eq("operation_id", candidate.operation_id).eq("status", "pending")
+        .eq("retry_attempts", candidate.retry_attempts).lte("next_attempt_at", new Date(now).toISOString())
+        .select("operation_id,tenant_id,project_id,person_id").maybeSingle();
+      if (lease.error) throw new Error("M4 revocation work could not be claimed");
+      if (lease.data) claimed.push({
+        project: { tenantId: lease.data.tenant_id, projectId: lease.data.project_id },
+        matrix_person_id: lease.data.person_id, operation_id: lease.data.operation_id,
+      });
+    }
+    return claimed;
   }
 
   async insertEvent(row: EventRow): Promise<InsertResult> {

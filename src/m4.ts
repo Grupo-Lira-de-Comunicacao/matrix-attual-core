@@ -86,6 +86,22 @@ export async function notifyAttualOneLink(
   }
 }
 
+export async function retryPendingRevocations(repository: MatrixRepository, config: RuntimeConfig) {
+  const work = await repository.claimPendingRevocations(4);
+  const results = await Promise.all(work.map(async (item) => {
+    try {
+      if (!await notifyAttualOneLink(config, item.matrix_person_id, "revoked", item.operation_id)) return false;
+      await repository.confirmRevocation(item.project, item.operation_id);
+      return true;
+    } catch {
+      // Do not discard the durable work entry. The lease enables the next retry.
+      return false;
+    }
+  }));
+  const confirmed = results.filter(Boolean).length;
+  return { claimed: work.length, confirmed, pending: work.length - confirmed };
+}
+
 export async function dispatchAttualOneSignals(
   repository: MatrixRepository,
   config: RuntimeConfig,

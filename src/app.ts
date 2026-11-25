@@ -10,6 +10,7 @@ import {
   authenticateServerBearer,
   consentSyncSchema,
   dispatchAttualOneSignals,
+  retryPendingRevocations,
   identityBridgeIssueSchema,
   identityLinkSchema,
   identityUnlinkSchema,
@@ -204,6 +205,23 @@ export function createApp(options: AppOptions = {}) {
       return c.json({ status: "ok", ...result, observability, marketing_enabled: false, n8n_external_actions_enabled: false, correlation_id: cid }, 200);
     } catch {
       return c.json({ error: { code: "m4_dispatch_failed", message: "M4 dispatcher failed", correlation_id: cid } }, 503);
+    }
+  });
+
+  app.post("/v1/internal/m4/reconcile-revocations", async (c) => {
+    const cid = requestCorrelationId(c.req.raw.headers);
+    c.header("X-Correlation-Id", cid);
+    if (!authenticateServerBearer(c.req.raw.headers, config.m4InternalKey)) {
+      return c.json({ error: { code: "unauthorized", message: "M4 internal authorization required", correlation_id: cid } }, 401);
+    }
+    if (!config.attualOneIntegrationSecret || !config.attualOneLinkCallbackUrl) {
+      return c.json({ error: { code: "m4_link_config_missing", message: "M4 link integration unavailable", correlation_id: cid } }, 503);
+    }
+    try {
+      const result = await retryPendingRevocations(repository, config);
+      return c.json({ ...result, marketing_enabled: false, external_actions_enabled: false, correlation_id: cid }, 200);
+    } catch {
+      return c.json({ error: { code: "m4_revocation_reconciliation_failed", message: "M4 reconciliation unavailable", correlation_id: cid } }, 503);
     }
   });
 

@@ -11,12 +11,17 @@ create table public.matrix_m4_revocation_receipts (
   status text not null default 'pending' check (status in ('pending', 'confirmed')),
   received_at timestamptz not null,
   confirmed_at timestamptz,
+  retry_attempts integer not null default 0 check (retry_attempts >= 0),
+  next_attempt_at timestamptz not null default now() + interval '30 seconds',
   recover_until timestamptz not null,
   check (status = 'confirmed' or confirmed_at is null),
   check (status <> 'confirmed' or confirmed_at is not null)
 );
 create index matrix_m4_revocation_pending_subject
   on public.matrix_m4_revocation_receipts(tenant_id, project_id, person_id)
+  where status = 'pending';
+create index matrix_m4_revocation_retry_due
+  on public.matrix_m4_revocation_receipts(next_attempt_at, operation_id)
   where status = 'pending';
 
 alter table public.matrix_m4_revocation_receipts enable row level security;

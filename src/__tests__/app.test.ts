@@ -8,6 +8,7 @@ import type {
   PersonalizedRecommendation,
   M4ConsentChoice,
   PendingSignal,
+  PendingRevocation,
 } from "../db.js";
 import type { RuntimeConfig } from "../config.js";
 
@@ -64,7 +65,8 @@ class FakeRepository implements MatrixRepository {
   async unlinkPerson() {
     return this.personTokenValid ? { matrix_person_id: "44444444-4444-4444-8444-444444444444", operation_id: "abababab-abab-4bab-8bab-abababababab", confirmed: false } : null;
   }
-  async confirmRevocation(_project: ProjectRef, _operationId: string) {}
+  async confirmRevocation(_project: PendingRevocation["project"], _operationId: string) {}
+  async claimPendingRevocations(_limit: number): Promise<PendingRevocation[]> { return []; }
   async listPendingAttualOneSignals(): Promise<PendingSignal[]> { return []; }
   async getSignalDispatchGate(_id: string): Promise<"allowed" | "stale" | "ineligible"> { return "allowed"; }
   async markSignalSuppressed(_id: string, _reason: string) { return true; }
@@ -306,6 +308,28 @@ describe("M4 downstream receipts at the API boundary", () => {
       expect(JSON.parse(String(request?.body)).correlation_id).toBe(original.operation_id);
     }
     expect(persist).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectKey: "attualplay" }), original.operation_id);
+  });
+
+  it("retries only through the internal runner and keeps a missing receipt pending", async () => {
+    const repo = new FakeRepository();
+    const original = (await repo.unlinkPerson())!;
+    const project = { tenantId: "fixture-tenant", projectId: "fixture-project" };
+    const claim = vi.spyOn(repo, "claimPendingRevocations").mockResolvedValue([{...original, project}]);
+    const persist = vi.spyOn(repo, "confirmRevocation");
+    const fetcher = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("One temporarily unavailable"))
+      .mockResolvedValueOnce(Response.json({ accepted: true, matrix_person_id: original.matrix_person_id,
+        link_status: "revoked", marketing_enabled: false, external_action_enabled: false }));
+    const app = createApp({ config, repository: repo });
+    const path = "/v1/internal/m4/reconcile-revocations";
+    expect((await app.request(path, {method: "POST"})).status).toBe(401);
+    expect(claim).not.toHaveBeenCalled();
+    const run = async () => (await app.request(path, {method: "POST",
+      headers: { authorization: `Bearer ${config.m4InternalKey}` }})).json();
+    expect(await run()).toMatchObject({ claimed: 1, confirmed: 0, pending: 1 });
+    expect(persist).not.toHaveBeenCalled();
+    expect(await run()).toMatchObject({ claimed: 1, confirmed: 1, pending: 0, marketing_enabled: false, external_actions_enabled: false });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenCalledExactlyOnceWith(project, original.operation_id);
   });
 
   it("records only the matching active receipt as a delivered signal", async () => {
