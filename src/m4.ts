@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeConfig } from "./config.js";
 import type { MatrixRepository } from "./db.js";
+import { hasLinkReceipt, hasSignalReceipt } from "./m4-receipts.js";
 
 export const m4ConsentSchema = z.object({
   analytics: z.boolean(),
@@ -79,7 +80,7 @@ export async function notifyAttualOneLink(
       }),
       signal: AbortSignal.timeout(8000),
     });
-    return response.ok;
+    return await hasLinkReceipt(response, matrixPersonId, linkStatus);
   } catch {
     return false;
   }
@@ -106,11 +107,11 @@ export async function dispatchAttualOneSignals(
         body: JSON.stringify(row.payload),
         signal: AbortSignal.timeout(8000),
       });
-      if (response.ok || response.status === 409) {
+      if (await hasSignalReceipt(response, row.idempotency_key)) {
         await repository.markSignalDelivered(row.id);
         delivered += 1;
       } else {
-        await repository.markSignalFailed(row.id, `attual_one_http_${response.status}`);
+        await repository.markSignalFailed(row.id, response.ok ? "attual_one_unconfirmed_receipt" : `attual_one_http_${response.status}`);
         failed += 1;
       }
     } catch {
